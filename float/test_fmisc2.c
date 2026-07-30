@@ -100,6 +100,21 @@ int main(void) {
         TEST_ASSERT(c3 == 1 && c0 == 0, "ficomp st0==mem32: c3=%u c0=%u", c3, c0);
     }
 
+    /* FICOMP with NaN: sets C3=C2=C0=1 (unordered) */
+    {
+        double st0 = NAN;
+        int32_t mem32 = 7;
+        uint16_t sw = 0;
+        __asm__ volatile(
+            "fldl %1\n\t"
+            "ficompl %2\n\t"
+            "fnstsw %0"
+            : "=m"(sw)
+            : "m"(st0), "m"(mem32));
+        uint8_t c3 = (sw >> 14) & 1, c2 = (sw >> 10) & 1, c0 = (sw >> 8) & 1;
+        TEST_ASSERT(c3 == 1 && c2 == 1 && c0 == 1, "ficomp with NaN (unordered): c3=%u c2=%u c0=%u", c3, c2, c0);
+    }
+
     /* FSINCOS: compute sin and cos simultaneously */
     {
         double angle = 0.0; /* sin(0)=0, cos(0)=1 */
@@ -144,6 +159,23 @@ int main(void) {
             : "m"(b), "m"(a));
         uint8_t c3 = (sw >> 14) & 1, c2 = (sw >> 10) & 1, c0 = (sw >> 8) & 1;
         TEST_ASSERT(c3 == 0 && c2 == 0 && c0 == 0, "fucom a>b: c3=%u c2=%u c0=%u", c3, c2, c0);
+    }
+
+    /* FUCOM with NaN: sets C3=C2=C0=1 (unordered) */
+    {
+        double a = NAN, b = 2.0;
+        uint16_t sw = 0;
+        __asm__ volatile(
+            "fldl %1\n\t"
+            "fldl %2\n\t"
+            "fucom\n\t"
+            "fnstsw %0\n\t"
+            "fstp %%st(0)\n\t"
+            "fstp %%st(0)"
+            : "=m"(sw)
+            : "m"(b), "m"(a));
+        uint8_t c3 = (sw >> 14) & 1, c2 = (sw >> 10) & 1, c0 = (sw >> 8) & 1;
+        TEST_ASSERT(c3 == 1 && c2 == 1 && c0 == 1, "fucom with NaN (unordered): c3=%u c2=%u c0=%u", c3, c2, c0);
     }
 
     /* FUCOMP: compare and pop */
