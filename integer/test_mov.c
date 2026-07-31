@@ -96,6 +96,52 @@ static void test_mov_mem_reg(void) {
     TEST_ASSERT(dst == 0xAABBCCDD, "movq mem,reg");
 }
 
+static void test_mov_sib_extended_index(void) {
+    /* 4a 89 0c d7    movq %rcx, (%rdi,%r10,8)
+     * REX.WX (0x4a) selects an extended index register (r10) in the SIB byte
+     * with scale 8, base rdi and no displacement.
+     */
+    uint64_t buf[4] = {0, 0, 0, 0};
+
+    __asm__ volatile (
+        "movq $0xFEEDFACECAFEBEEF, %%rcx\n\t"
+        "movq $2, %%r10\n\t"
+        "movq %%rcx, (%%rdi,%%r10,8)"
+        :
+        : "D"(buf)
+        : "rcx", "r10", "memory"
+    );
+    TEST_ASSERT(buf[2] == 0xFEEDFACECAFEBEEFUL,
+                "movq %%rcx,(%%rdi,%%r10,8) store: got 0x%" PRIx64, buf[2]);
+    TEST_ASSERT(buf[0] == 0 && buf[1] == 0 && buf[3] == 0,
+                "movq %%rcx,(%%rdi,%%r10,8) must not touch neighbours");
+
+    /* Load back through the same addressing form */
+    uint64_t loaded;
+    __asm__ volatile (
+        "movq $2, %%r10\n\t"
+        "movq (%%rdi,%%r10,8), %%rcx\n\t"
+        "movq %%rcx, %0"
+        : "=r"(loaded)
+        : "D"(buf)
+        : "rcx", "r10"
+    );
+    TEST_ASSERT(loaded == 0xFEEDFACECAFEBEEFUL,
+                "movq (%%rdi,%%r10,8),%%rcx load: got 0x%" PRIx64, loaded);
+
+    /* Index 0 exercises the same encoding with a different offset */
+    __asm__ volatile (
+        "movq $0x1122334455667788, %%rcx\n\t"
+        "xorq %%r10, %%r10\n\t"
+        "movq %%rcx, (%%rdi,%%r10,8)"
+        :
+        : "D"(buf)
+        : "rcx", "r10", "memory"
+    );
+    TEST_ASSERT(buf[0] == 0x1122334455667788UL,
+                "movq %%rcx,(%%rdi,%%r10,8) index 0: got 0x%" PRIx64, buf[0]);
+}
+
 static void test_mov_32bit_zero_extends(void) {
     uint64_t result;
 
@@ -229,6 +275,7 @@ int main(void) {
     test_mov_reg_imm();
     test_mov_reg_mem();
     test_mov_mem_reg();
+    test_mov_sib_extended_index();
     test_mov_32bit_zero_extends();
     test_movsx();
     test_movsxd();
