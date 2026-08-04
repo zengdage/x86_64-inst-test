@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <math.h>
 #include "../common.h"
 
 typedef union {
@@ -24,11 +25,15 @@ typedef union {
     double f64[8];
 } zmm_t __attribute__((aligned(64)));
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx512(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile ("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
     return (ebx >> 16) & 1;
 }
+#else
+#define check_avx512() 1
+#endif
 
 int main(void) {
     if (!check_avx512()) {
@@ -89,6 +94,46 @@ int main(void) {
     );
     for (int i = 0; i < 16; i++)
         TEST_ASSERT(dst.f32[i] == 1.0f, "VDIVPS self-div lane %d: %f", i, dst.f32[i]);
+
+    /* IEEE-754 divide boundaries. */
+    for (int i = 0; i < 16; i++) { a.f32[i] = 1.0f; b.f32[i] = 1.0f; }
+    a.f32[0] = 1.0f;      b.f32[0] = 0.0f;
+    a.f32[1] = -1.0f;     b.f32[1] = 0.0f;
+    a.f32[2] = 0.0f;      b.f32[2] = 0.0f;
+    a.f32[3] = INFINITY;  b.f32[3] = INFINITY;
+    a.f32[4] = 1.0f;      b.f32[4] = INFINITY;
+    __asm__ volatile (
+        "vmovaps %1, %%zmm0\n\t"
+        "vmovaps %2, %%zmm1\n\t"
+        "vdivps %%zmm1, %%zmm0, %%zmm2\n\t"
+        "vmovaps %%zmm2, %0"
+        : "=m"(dst) : "m"(a), "m"(b) : "zmm0", "zmm1", "zmm2"
+    );
+    TEST_ASSERT(isinf(dst.f32[0]) && dst.f32[0] > 0.0f, "VDIVPS 1/+0 = +inf");
+    TEST_ASSERT(isinf(dst.f32[1]) && dst.f32[1] < 0.0f, "VDIVPS -1/+0 = -inf");
+    TEST_ASSERT(isnan(dst.f32[2]) && isnan(dst.f32[3]), "VDIVPS 0/0 and inf/inf = NaN");
+    TEST_ASSERT(dst.f32[4] == 0.0f && !signbit(dst.f32[4]), "VDIVPS 1/+inf = +0");
+
+    /* Masked-off zero divisors must not set the MXCSR divide-by-zero flag. */
+    for (int i = 0; i < 16; i++) { a.f32[i] = 1.0f; b.f32[i] = 0.0f; }
+    kmask = 0;
+    uint32_t mxcsr_before, mxcsr_after, mxcsr_clean;
+    __asm__ volatile ("stmxcsr %0" : "=m"(mxcsr_before));
+    mxcsr_clean = mxcsr_before & ~UINT32_C(0x3f);
+    __asm__ volatile ("ldmxcsr %0" : : "m"(mxcsr_clean));
+    __asm__ volatile (
+        "kmovq %3, %%k1\n\t"
+        "vmovaps %1, %%zmm0\n\t"
+        "vmovaps %2, %%zmm1\n\t"
+        "vdivps %%zmm1, %%zmm0, %%zmm2%{%%k1%}%{z%}\n\t"
+        "vmovaps %%zmm2, %0"
+        : "=m"(dst) : "m"(a), "m"(b), "r"(kmask) : "zmm0", "zmm1", "zmm2", "k1"
+    );
+    __asm__ volatile ("stmxcsr %0" : "=m"(mxcsr_after));
+    __asm__ volatile ("ldmxcsr %0" : : "m"(mxcsr_before));
+    TEST_ASSERT(!(mxcsr_after & (1u << 2)), "VDIVPS empty mask suppresses divide-by-zero exception");
+    for (int i = 0; i < 16; i++)
+        TEST_ASSERT(dst.u32[i] == 0, "VDIVPS empty zero mask lane %d", i);
 
     TEST_END();
 }

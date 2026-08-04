@@ -143,6 +143,32 @@ static void test_inc_mem(void) {
     TEST_ASSERT(val == 42, "incq mem: 41+1 expected 42");
 }
 
+static void test_inc_memory_width_overflow_flags(void) {
+    uint8_t m8 = INT8_MAX;
+    uint16_t m16 = INT16_MAX;
+    uint32_t m32 = INT32_MAX;
+    uint64_t m64 = INT64_MAX;
+    uint64_t flags;
+
+    __asm__ volatile ("incb %0" : "+m"(m8) : : "cc");
+    __asm__ volatile ("incw %0" : "+m"(m16) : : "cc");
+    __asm__ volatile ("incl %0" : "+m"(m32) : : "cc");
+    __asm__ volatile (
+        "stc\n\tincq %0\n\tpushfq\n\tpopq %1"
+        : "+m"(m64), "=r"(flags) : : "cc"
+    );
+    TEST_ASSERT(m8 == UINT8_C(0x80), "incb memory INT8_MAX overflow");
+    TEST_ASSERT(m16 == UINT16_C(0x8000), "incw memory INT16_MAX overflow");
+    TEST_ASSERT(m32 == UINT32_C(0x80000000), "incl memory INT32_MAX overflow");
+    TEST_ASSERT(m64 == UINT64_C(0x8000000000000000), "incq memory INT64_MAX overflow");
+    TEST_ASSERT(flags & OF_FLAG, "incq memory signed overflow sets OF");
+    TEST_ASSERT(flags & SF_FLAG, "incq memory overflow result sets SF");
+    TEST_ASSERT(!(flags & ZF_FLAG), "incq memory overflow result clears ZF");
+    TEST_ASSERT(flags & PF_FLAG, "incq memory overflow low byte zero sets PF");
+    TEST_ASSERT(flags & AF_FLAG, "incq INT64_MAX carry from bit 3 sets AF");
+    TEST_ASSERT(flags & CF_FLAG, "incq memory preserves set CF");
+}
+
 int main(void) {
     TEST_START("INC instruction");
     test_inc_basic();
@@ -150,5 +176,6 @@ int main(void) {
     test_inc_cf_preserved();
     test_inc_sizes();
     test_inc_mem();
+    test_inc_memory_width_overflow_flags();
     TEST_END();
 }

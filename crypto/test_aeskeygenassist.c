@@ -21,10 +21,12 @@
  * Note: Do not use static linking.
  */
 #include "../common.h"
+#include "aes_ref.h"
 
 /* Test AESKEYGENASSIST xmm, xmm, imm8 with zero input */
 static void test_aeskeygenassist_zero(void) {
     xmm_t result;
+    xmm_t expected;
 
     __asm__ volatile (
         "pxor %%xmm0, %%xmm0\n\t"
@@ -34,6 +36,9 @@ static void test_aeskeygenassist_zero(void) {
         :
         : "xmm0", "xmm1"
     );
+    aes_ref_keygenassist((const uint8_t[16]){0}, 0x00, expected.u8);
+    TEST_ASSERT(memcmp(&result, &expected, 16) == 0,
+                "aeskeygenassist zero/rcon0 matches independent reference");
 
     /* SubBytes(0x00) = 0x63
      * SubWord(0x00000000) = 0x63636363
@@ -56,6 +61,7 @@ static void test_aeskeygenassist_zero(void) {
 /* Test AESKEYGENASSIST with RCON=0x01 */
 static void test_aeskeygenassist_rcon01(void) {
     xmm_t result;
+    xmm_t expected;
 
     __asm__ volatile (
         "pxor %%xmm0, %%xmm0\n\t"
@@ -65,6 +71,9 @@ static void test_aeskeygenassist_rcon01(void) {
         :
         : "xmm0", "xmm1"
     );
+    aes_ref_keygenassist((const uint8_t[16]){0}, 0x01, expected.u8);
+    TEST_ASSERT(memcmp(&result, &expected, 16) == 0,
+                "aeskeygenassist zero/rcon1 matches independent reference");
 
     /* SubWord(0) = 0x63636363
      * RotWord(0x63636363) = 0x63636363
@@ -87,6 +96,7 @@ static void test_aeskeygenassist_mem(void) {
     xmm_t input = { .u8 = {0x2b,0x7e,0x15,0x16,0x28,0xae,0xd2,0xa6,
                             0xab,0xf7,0x15,0x88,0x09,0xcf,0x4f,0x3c} };
     xmm_t result_reg, result_mem;
+    xmm_t expected;
 
     __asm__ volatile (
         "movdqu %1, %%xmm0\n\t"
@@ -96,6 +106,7 @@ static void test_aeskeygenassist_mem(void) {
         : "m"(input)
         : "xmm0", "xmm1"
     );
+    aes_ref_keygenassist(input.u8, 0x01, expected.u8);
 
     __asm__ volatile (
         "aeskeygenassist $0x01, %1, %%xmm1\n\t"
@@ -107,6 +118,8 @@ static void test_aeskeygenassist_mem(void) {
 
     TEST_ASSERT(memcmp(&result_reg, &result_mem, 16) == 0,
                 "aeskeygenassist: reg and mem source produce same result");
+    TEST_ASSERT(memcmp(&result_mem, &expected, 16) == 0,
+                "aeskeygenassist memory source matches independent reference");
 }
 
 /* Test AESKEYGENASSIST with known AES-128 key expansion vector
@@ -116,6 +129,7 @@ static void test_aeskeygenassist_aes128_key(void) {
     xmm_t key = { .u8 = {0x2b,0x7e,0x15,0x16,0x28,0xae,0xd2,0xa6,
                           0xab,0xf7,0x15,0x88,0x09,0xcf,0x4f,0x3c} };
     xmm_t result;
+    xmm_t expected;
 
     __asm__ volatile (
         "movdqu %1, %%xmm0\n\t"
@@ -125,6 +139,9 @@ static void test_aeskeygenassist_aes128_key(void) {
         : "m"(key)
         : "xmm0", "xmm1"
     );
+    aes_ref_keygenassist(key.u8, 0x01, expected.u8);
+    TEST_ASSERT(memcmp(&result, &expected, 16) == 0,
+                "aeskeygenassist AES-128 key matches independent reference");
 
     /* Verify result is deterministic and non-trivial */
     xmm_t result2;

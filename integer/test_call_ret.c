@@ -85,11 +85,39 @@ static void test_nested_call(void) {
     TEST_ASSERT(result == 11, "nested call: expected 11, got %lu", result);
 }
 
+static void test_ret_imm16_stack_adjust(void) {
+    uint64_t rsp_before, rsp_after, result;
+    __asm__ volatile (
+        "movq %%rsp, %0\n\t" "subq $16, %%rsp\n\t" "call 1f\n\t"
+        "movq %%rsp, %1\n\t" "jmp 2f\n\t"
+        "1: movq $123, %2\n\t" "ret $16\n\t" "2:"
+        : "=&r"(rsp_before), "=&r"(rsp_after), "=&r"(result)
+        :
+        : "cc", "memory");
+    TEST_ASSERT(result == 123, "ret imm16 returns to caller");
+    TEST_ASSERT(rsp_after == rsp_before, "ret imm16 discards 16 argument bytes");
+}
+
+static void test_call_memory_indirect(void) {
+    void *target;
+    uint64_t result;
+    __asm__ volatile (
+        "leaq 1f(%%rip), %%rax\n\t" "movq %%rax, %1\n\t"
+        "call *%1\n\t" "jmp 2f\n\t"
+        "1: movq $321, %0\n\t" "ret\n\t" "2:"
+        : "=&r"(result), "=m"(target)
+        :
+        : "rax", "cc", "memory");
+    TEST_ASSERT(result == 321, "call through memory operand");
+}
+
 int main(void) {
     TEST_START("CALL/RET instructions");
     test_call_ret_direct();
     test_call_indirect();
     test_call_pushes_return_addr();
     test_nested_call();
+    test_ret_imm16_stack_adjust();
+    test_call_memory_indirect();
     TEST_END();
 }

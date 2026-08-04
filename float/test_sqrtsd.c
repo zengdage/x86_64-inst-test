@@ -174,10 +174,38 @@ static void test_sqrtsd_xmm_xmm(void) {
     TEST_ASSERT(result.f64[1] == 100.0, "sqrtsd xmm,xmm upper from dest preserved");
 }
 
+static void test_sqrtsd_exact_snan_and_upper_lane(void) {
+    xmm_t dst = { .u64 = {
+        UINT64_C(0xdeadbeefdeadbeef), UINT64_C(0xfff8123456789abc)
+    } };
+    xmm_t src = { .u64 = {
+        UINT64_C(0x7ff0000000001234), UINT64_C(0x1111222233334444)
+    } };
+    xmm_t expected = dst, result;
+    expected.u64[0] = UINT64_C(0x7ff8000000001234);
+    uint32_t old_mxcsr, clean_mxcsr, after_mxcsr;
+
+    __asm__ volatile ("stmxcsr %0" : "=m"(old_mxcsr));
+    clean_mxcsr = old_mxcsr & ~UINT32_C(0x3f);
+    __asm__ volatile ("ldmxcsr %0" : : "m"(clean_mxcsr));
+    __asm__ volatile (
+        "movdqa %1, %%xmm0\n\t"
+        "sqrtsd %2, %%xmm0\n\t"
+        "movdqa %%xmm0, %0"
+        : "=m"(result) : "m"(dst), "m"(src) : "xmm0"
+    );
+    __asm__ volatile ("stmxcsr %0" : "=m"(after_mxcsr));
+    __asm__ volatile ("ldmxcsr %0" : : "m"(old_mxcsr));
+    TEST_ASSERT(memcmp(&result, &expected, sizeof(expected)) == 0,
+                "SQRTSD quiets SNaN and preserves exact destination upper lane");
+    TEST_ASSERT(after_mxcsr & 1, "SQRTSD SNaN sets MXCSR invalid flag");
+}
+
 int main(void) {
     TEST_START("SQRTSD instruction");
     test_sqrtsd_basic();
     test_sqrtsd_mem();
     test_sqrtsd_xmm_xmm();
+    test_sqrtsd_exact_snan_and_upper_lane();
     TEST_END();
 }

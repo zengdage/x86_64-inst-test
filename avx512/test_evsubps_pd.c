@@ -9,6 +9,8 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <float.h>
+#include <math.h>
 #include "../common.h"
 
 typedef union {
@@ -24,11 +26,15 @@ typedef union {
     double f64[8];
 } zmm_t __attribute__((aligned(64)));
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx512(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile ("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
     return (ebx >> 16) & 1;
 }
+#else
+#define check_avx512() 1
+#endif
 
 int main(void) {
     if (!check_avx512()) {
@@ -89,6 +95,48 @@ int main(void) {
     );
     for (int i = 0; i < 16; i++)
         TEST_ASSERT(dst.f32[i] == 0.0f, "VSUBPS self-sub lane %d: %f", i, dst.f32[i]);
+
+    for (int i = 0; i < 16; i++) { a.f32[i] = 1.0f; b.f32[i] = 1.0f; }
+    a.f32[0] = INFINITY; b.f32[0] = INFINITY;
+    a.f32[1] = -0.0f; b.f32[1] = 0.0f;
+    a.f32[2] = FLT_MAX; b.f32[2] = -FLT_MAX;
+    a.f32[3] = FLT_MIN; b.f32[3] = FLT_MIN / 2.0f;
+    a.f32[4] = NAN; b.f32[4] = 1.0f;
+    __asm__ volatile (
+        "vmovaps %1, %%zmm0\n\t" "vmovaps %2, %%zmm1\n\t"
+        "vsubps %%zmm1, %%zmm0, %%zmm2\n\t" "vmovaps %%zmm2, %0"
+        : "=m"(dst) : "m"(a), "m"(b) : "zmm0", "zmm1", "zmm2"
+    );
+    TEST_ASSERT(isnan(dst.f32[0]), "VSUBPS Inf-Inf is NaN");
+    TEST_ASSERT(dst.f32[1] == 0.0f && signbit(dst.f32[1]), "VSUBPS -0-+0 is -0");
+    TEST_ASSERT(isinf(dst.f32[2]) && !signbit(dst.f32[2]), "VSUBPS overflow");
+    TEST_ASSERT(dst.f32[3] == FLT_MIN / 2.0f, "VSUBPS subnormal");
+    TEST_ASSERT(isnan(dst.f32[4]), "VSUBPS NaN propagation");
+
+    a.f64[0] = INFINITY; b.f64[0] = INFINITY;
+    a.f64[1] = -0.0; b.f64[1] = 0.0;
+    a.f64[2] = DBL_MAX; b.f64[2] = -DBL_MAX;
+    a.f64[3] = DBL_MIN; b.f64[3] = DBL_MIN / 2.0;
+    for (int i = 4; i < 8; i++) { a.f64[i] = 1.0; b.f64[i] = 1.0; }
+    __asm__ volatile (
+        "vmovapd %1, %%zmm0\n\t" "vmovapd %2, %%zmm1\n\t"
+        "vsubpd %%zmm1, %%zmm0, %%zmm2\n\t" "vmovapd %%zmm2, %0"
+        : "=m"(dst) : "m"(a), "m"(b) : "zmm0", "zmm1", "zmm2"
+    );
+    TEST_ASSERT(isnan(dst.f64[0]), "VSUBPD Inf-Inf is NaN");
+    TEST_ASSERT(dst.f64[1] == 0.0 && signbit(dst.f64[1]), "VSUBPD signed zero");
+    TEST_ASSERT(isinf(dst.f64[2]), "VSUBPD overflow");
+    TEST_ASSERT(dst.f64[3] == DBL_MIN / 2.0, "VSUBPD subnormal");
+
+    zmm_t initial;
+    for (int i = 0; i < 16; i++) initial.f32[i] = 77.0f;
+    kmask = 0;
+    __asm__ volatile (
+        "kmovq %4, %%k1\n\t" "vmovaps %1, %%zmm0\n\t" "vmovaps %2, %%zmm1\n\t"
+        "vmovaps %3, %%zmm2\n\t" "vsubps %%zmm1, %%zmm0, %%zmm2%{%%k1%}\n\t" "vmovaps %%zmm2, %0"
+        : "=m"(dst) : "m"(a), "m"(b), "m"(initial), "r"(kmask) : "zmm0", "zmm1", "zmm2", "k1"
+    );
+    for (int i = 0; i < 16; i++) TEST_ASSERT(dst.f32[i] == 77.0f, "VSUBPS k=0 merge lane %d", i);
 
     TEST_END();
 }

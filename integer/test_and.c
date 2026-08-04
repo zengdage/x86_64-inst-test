@@ -90,10 +90,47 @@ static void test_and_reg_mem(void) {
     TEST_ASSERT(result == 0x9ABCDEF0UL, "andq reg,mem: low 32 bits");
 }
 
+static void test_and_width_memory_immediate_and_flags(void) {
+    uint8_t m8 = UINT8_MAX;
+    uint16_t m16 = UINT16_MAX;
+    uint32_t m32 = UINT32_MAX;
+    uint64_t m64 = UINT64_MAX;
+    uint64_t result, flags;
+
+    __asm__ volatile ("andb $0x80, %0" : "+m"(m8) : : "cc");
+    __asm__ volatile ("andw $0x8001, %0" : "+m"(m16) : : "cc");
+    __asm__ volatile ("andl $0x80000001, %0" : "+m"(m32) : : "cc");
+    __asm__ volatile (
+        "andq $-2147483648, %0\n\t"
+        "pushfq\n\tpopq %1"
+        : "+m"(m64), "=r"(flags) : : "cc"
+    );
+    TEST_ASSERT(m8 == UINT8_C(0x80), "andb memory boundary: %#x", m8);
+    TEST_ASSERT(m16 == UINT16_C(0x8001), "andw memory boundary: %#x", m16);
+    TEST_ASSERT(m32 == UINT32_C(0x80000001), "andl memory boundary: %#x", m32);
+    TEST_ASSERT(m64 == UINT64_C(0xffffffff80000000),
+                "andq sign-extended imm32 boundary: %#" PRIx64, m64);
+    TEST_ASSERT(flags & SF_FLAG, "andq negative result: SF set");
+    TEST_ASSERT(!(flags & ZF_FLAG), "andq nonzero result: ZF clear");
+    TEST_ASSERT(flags & PF_FLAG, "andq low byte zero: PF set");
+    TEST_ASSERT(!(flags & CF_FLAG), "andq clears CF");
+    TEST_ASSERT(!(flags & OF_FLAG), "andq clears OF");
+
+    __asm__ volatile (
+        "movq $-1, %%rax\n\t"
+        "andl $0x80000000, %%eax\n\t"
+        "movq %%rax, %0"
+        : "=r"(result) : : "rax", "cc"
+    );
+    TEST_ASSERT(result == UINT64_C(0x0000000080000000),
+                "andl writes eax and clears RAX high half: %#" PRIx64, result);
+}
+
 int main(void) {
     TEST_START("AND instruction");
     test_and_reg_reg();
     test_and_reg_imm();
     test_and_reg_mem();
+    test_and_width_memory_immediate_and_flags();
     TEST_END();
 }

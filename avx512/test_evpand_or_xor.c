@@ -24,11 +24,15 @@ typedef union {
     double f64[8];
 } zmm_t __attribute__((aligned(64)));
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx512(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile ("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
     return (ebx >> 16) & 1;
 }
+#else
+#define check_avx512() 1
+#endif
 
 int main(void) {
     if (!check_avx512()) {
@@ -116,6 +120,48 @@ int main(void) {
         uint32_t expected = (kmask >> i) & 1 ? 0xAAAAAAAAU : 0;
         TEST_ASSERT(dst.u32[i] == expected,
             "VPANDD zero mask lane %d: %08x != %08x", i, dst.u32[i], expected);
+    }
+
+    /* Qword encodings and operand-order-sensitive ANDN reference. */
+    for (int i = 0; i < 8; i++) {
+        a.u64[i] = UINT64_C(0xf0f0f0f00f0f0f0f) ^ (uint64_t)i;
+        b.u64[i] = UINT64_C(0xff00ff0055aa55aa) ^ ((uint64_t)i << 32);
+    }
+#define TEST_QWORD_BITOP(INSN, EXPR) do { \
+        __asm__ volatile ("vmovdqu64 %1, %%zmm0\n\t" "vmovdqu64 %2, %%zmm1\n\t" \
+                          INSN " %%zmm1, %%zmm0, %%zmm2\n\t" "vmovdqu64 %%zmm2, %0" \
+                          : "=m"(dst) : "m"(a), "m"(b) : "zmm0","zmm1","zmm2"); \
+        for (int i = 0; i < 8; i++) { \
+            uint64_t expected = (EXPR); \
+            TEST_ASSERT(dst.u64[i] == expected, INSN " lane %d: %016llx != %016llx", i, \
+                        (unsigned long long)dst.u64[i], (unsigned long long)expected); \
+        } \
+    } while (0)
+    TEST_QWORD_BITOP("vpandq",  a.u64[i] & b.u64[i]);
+    TEST_QWORD_BITOP("vpandnq", ~a.u64[i] & b.u64[i]);
+    TEST_QWORD_BITOP("vporq",   a.u64[i] | b.u64[i]);
+    TEST_QWORD_BITOP("vpxorq",  a.u64[i] ^ b.u64[i]);
+#undef TEST_QWORD_BITOP
+
+    /* Empty merge and endpoint-only zero masks. */
+    for (int i = 0; i < 8; i++) dst.u64[i] = UINT64_C(0xdeadbeefdeadbeef);
+    kmask = 0;
+    __asm__ volatile (
+        "kmovq %3, %%k1\n\t" "vmovdqu64 %0, %%zmm2\n\t" "vmovdqu64 %1, %%zmm0\n\t"
+        "vmovdqu64 %2, %%zmm1\n\t" "vpxorq %%zmm1, %%zmm0, %%zmm2%{%%k1%}\n\t"
+        "vmovdqu64 %%zmm2, %0" : "+m"(dst) : "m"(a), "m"(b), "r"(kmask)
+        : "zmm0","zmm1","zmm2","k1");
+    for (int i = 0; i < 8; i++)
+        TEST_ASSERT(dst.u64[i] == UINT64_C(0xdeadbeefdeadbeef), "VPXORQ k=0 merge lane %d", i);
+
+    kmask = UINT64_C(0x81);
+    __asm__ volatile (
+        "kmovq %3, %%k1\n\t" "vmovdqu64 %1, %%zmm0\n\t" "vmovdqu64 %2, %%zmm1\n\t"
+        "vpxorq %%zmm1, %%zmm0, %%zmm2%{%%k1%}%{z%}\n\t" "vmovdqu64 %%zmm2, %0"
+        : "=m"(dst) : "m"(a), "m"(b), "r"(kmask) : "zmm0","zmm1","zmm2","k1");
+    for (int i = 0; i < 8; i++) {
+        uint64_t expected = (i == 0 || i == 7) ? (a.u64[i] ^ b.u64[i]) : 0;
+        TEST_ASSERT(dst.u64[i] == expected, "VPXORQ endpoint zero mask lane %d", i);
     }
 
     TEST_END();

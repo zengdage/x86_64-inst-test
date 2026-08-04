@@ -345,6 +345,48 @@ static void test_ftst(void) {
     TEST_ASSERT((sw & 0x4500) == 0x0100, "ftst -inf: negative (C0=1)");
 }
 
+static void test_x87_compare_nan_exceptions_and_eflags_clear(void) {
+    uint64_t qnan_bits = UINT64_C(0x7ff8123456789abc);
+    double qnan, one = 1.0;
+    memcpy(&qnan, &qnan_bits, sizeof(qnan));
+    uint64_t flags;
+    uint16_t status;
+
+#define RUN_X87_COMI(INSN) do {                                             \
+        __asm__ volatile (                                                  \
+            "fldl %2\n\tfldl %3\n\tfnclex\n\t"                         \
+            "movq $0x8d5, %%r11\n\tpushq %%r11\n\tpopfq\n\t"           \
+            INSN " %%st(1), %%st(0)\n\tpushfq\n\tpopq %0\n\t"           \
+            "fnstsw %1\n\tfstp %%st(0)\n\tfstp %%st(0)"                    \
+            : "=r"(flags), "=m"(status) : "m"(one), "m"(qnan)          \
+            : "r11", "cc", "memory");                                  \
+    } while (0)
+
+    RUN_X87_COMI("fucomi");
+    TEST_ASSERT((flags & (ZF_FLAG | PF_FLAG | CF_FLAG)) ==
+                (ZF_FLAG | PF_FLAG | CF_FLAG), "fucomi QNaN unordered flags");
+    TEST_ASSERT(!(flags & (OF_FLAG | SF_FLAG | AF_FLAG)),
+                "fucomi clears OF/SF/AF");
+    TEST_ASSERT(!(status & 1), "fucomi QNaN does not set invalid status");
+
+    RUN_X87_COMI("fcomi");
+    TEST_ASSERT((flags & (ZF_FLAG | PF_FLAG | CF_FLAG)) ==
+                (ZF_FLAG | PF_FLAG | CF_FLAG), "fcomi masked QNaN unordered flags");
+    TEST_ASSERT(!(flags & (OF_FLAG | SF_FLAG | AF_FLAG)),
+                "fcomi clears OF/SF/AF");
+    TEST_ASSERT(status & 1, "fcomi QNaN sets invalid status");
+#undef RUN_X87_COMI
+
+    /* Memory FCOM also signals on a QNaN and writes unordered C bits. */
+    __asm__ volatile (
+        "fldl %1\n\tfnclex\n\tfcoml %2\n\tfnstsw %0\n\tfstp %%st(0)"
+        : "=m"(status) : "m"(one), "m"(qnan) : "memory"
+    );
+    TEST_ASSERT((status & 0x4500) == 0x4500, "fcom memory QNaN unordered C bits");
+    TEST_ASSERT(status & 1, "fcom memory QNaN sets invalid status");
+    __asm__ volatile("fnclex");
+}
+
 int main(void) {
     TEST_START("FCOM/FCOMP/FCOMPP/FCOMI/FCOMIP/FUCOMI/FUCOMIP/FTST instructions");
     test_fcom();
@@ -355,5 +397,6 @@ int main(void) {
     test_fucomi();
     test_fucomip();
     test_ftst();
+    test_x87_compare_nan_exceptions_and_eflags_clear();
     TEST_END();
 }

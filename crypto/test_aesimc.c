@@ -12,12 +12,14 @@
  * Note: Do not use static linking.
  */
 #include "../common.h"
+#include "aes_ref.h"
 
 /* Test AESIMC xmm, xmm */
 static void test_aesimc_reg(void) {
     xmm_t input = { .u8 = {0x0f,0x0e,0x0d,0x0c,0x0b,0x0a,0x09,0x08,
                             0x07,0x06,0x05,0x04,0x03,0x02,0x01,0x00} };
     xmm_t result;
+    xmm_t expected;
 
     __asm__ volatile (
         "movdqu %1, %%xmm0\n\t"
@@ -27,6 +29,9 @@ static void test_aesimc_reg(void) {
         : "m"(input)
         : "xmm0", "xmm1"
     );
+    aes_ref_inv_mix(input.u8, expected.u8);
+    TEST_ASSERT(memcmp(&result, &expected, 16) == 0,
+                "aesimc xmm,xmm matches independent InvMixColumns reference");
 
     /* Verify determinism */
     xmm_t result2;
@@ -50,6 +55,7 @@ static void test_aesimc_mem(void) {
     xmm_t input = { .u8 = {0x2b,0x7e,0x15,0x16,0x28,0xae,0xd2,0xa6,
                             0xab,0xf7,0x15,0x88,0x09,0xcf,0x4f,0x3c} };
     xmm_t result_reg, result_mem;
+    xmm_t expected;
 
     __asm__ volatile (
         "movdqu %1, %%xmm0\n\t"
@@ -59,6 +65,7 @@ static void test_aesimc_mem(void) {
         : "m"(input)
         : "xmm0", "xmm1"
     );
+    aes_ref_inv_mix(input.u8, expected.u8);
 
     __asm__ volatile (
         "aesimc %1, %%xmm1\n\t"
@@ -70,6 +77,8 @@ static void test_aesimc_mem(void) {
 
     TEST_ASSERT(memcmp(&result_reg, &result_mem, 16) == 0,
                 "aesimc: reg and mem source produce same result");
+    TEST_ASSERT(memcmp(&result_mem, &expected, 16) == 0,
+                "aesimc memory source matches independent reference");
 }
 
 /* Test AESIMC with zero input */

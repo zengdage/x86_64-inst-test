@@ -2,6 +2,15 @@ CC      = gcc
 CFLAGS  = -O2 -Wall -Wno-unused-result -s
 LDFLAGS = -s
 
+# Runtime CPUID guards are disabled by default so instruction tests execute
+# unconditionally (important when validating a binary translator). Enable with
+# `make -B ENABLE_RUNTIME_CPU_CHECKS=1` for safe native execution on mixed CPUs
+# (`-B` is needed when switching modes because Make does not track flag changes).
+ENABLE_RUNTIME_CPU_CHECKS ?= 0
+ifeq ($(ENABLE_RUNTIME_CPU_CHECKS),1)
+CFLAGS += -DENABLE_RUNTIME_CPU_CHECKS=1
+endif
+
 # Directories
 DIRS    = integer float simd system crypto avx512 avx256
 

@@ -269,11 +269,56 @@ static void test_maxss_mem(void) {
     TEST_ASSERT(result.f32[1] == 10.0f, "maxss xmm,mem upper preserved");
 }
 
+static void test_minmaxss_exact_bits_upper_lanes_and_snan(void) {
+    xmm_t a = { .u32 = {
+        UINT32_C(0x3f800000), UINT32_C(0x80000000),
+        UINT32_C(0x7fc0abcd), UINT32_C(0x00000001)
+    } };
+    xmm_t b = { .u32 = {
+        UINT32_C(0x7f812345), UINT32_C(0x11111111),
+        UINT32_C(0x22222222), UINT32_C(0x33333333)
+    } };
+    xmm_t min_result, max_result, expected = a;
+    uint32_t old_mxcsr, clean_mxcsr, after_mxcsr;
+    expected.u32[0] = b.u32[0];
+
+    __asm__ volatile ("stmxcsr %0" : "=m"(old_mxcsr));
+    clean_mxcsr = old_mxcsr & ~UINT32_C(0x3f);
+    __asm__ volatile ("ldmxcsr %0" : : "m"(clean_mxcsr));
+    __asm__ volatile (
+        "movaps %2, %%xmm0\n\tminss %3, %%xmm0\n\tmovaps %%xmm0, %0\n\t"
+        "movaps %2, %%xmm0\n\tmaxss %3, %%xmm0\n\tmovaps %%xmm0, %1"
+        : "=m"(min_result), "=m"(max_result) : "m"(a), "m"(b) : "xmm0"
+    );
+    __asm__ volatile ("stmxcsr %0" : "=m"(after_mxcsr));
+    __asm__ volatile ("ldmxcsr %0" : : "m"(old_mxcsr));
+    TEST_ASSERT(memcmp(&min_result, &expected, sizeof(expected)) == 0,
+                "MINSS exact SNaN source and destination upper lanes");
+    TEST_ASSERT(memcmp(&max_result, &expected, sizeof(expected)) == 0,
+                "MAXSS exact SNaN source and destination upper lanes");
+    TEST_ASSERT(after_mxcsr & 1, "MINSS/MAXSS SNaN sets MXCSR invalid flag");
+
+    a.u32[0] = UINT32_C(0x80000000);
+    b.u32[0] = UINT32_C(0x00000000);
+    expected = a;
+    expected.u32[0] = b.u32[0];
+    __asm__ volatile (
+        "movaps %2, %%xmm0\n\tminss %3, %%xmm0\n\tmovaps %%xmm0, %0\n\t"
+        "movaps %2, %%xmm0\n\tmaxss %3, %%xmm0\n\tmovaps %%xmm0, %1"
+        : "=m"(min_result), "=m"(max_result) : "m"(a), "m"(b) : "xmm0"
+    );
+    TEST_ASSERT(memcmp(&min_result, &expected, sizeof(expected)) == 0,
+                "MINSS (-0,+0) selects exact +0 source and preserves upper lanes");
+    TEST_ASSERT(memcmp(&max_result, &expected, sizeof(expected)) == 0,
+                "MAXSS (-0,+0) selects exact +0 source and preserves upper lanes");
+}
+
 int main(void) {
     TEST_START("MINSS/MAXSS instructions");
     test_minss();
     test_minss_mem();
     test_maxss();
     test_maxss_mem();
+    test_minmaxss_exact_bits_upper_lanes_and_snan();
     TEST_END();
 }

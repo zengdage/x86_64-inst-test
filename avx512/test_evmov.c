@@ -9,6 +9,8 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #include "../common.h"
 
 typedef union {
@@ -24,6 +26,7 @@ typedef union {
     double f64[8];
 } zmm_t __attribute__((aligned(64)));
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx512(void) {
     uint32_t eax, ebx, ecx, edx;
     /* Check CPUID leaf 7 for AVX-512F (bit 16 of EBX) */
@@ -34,6 +37,9 @@ static int check_avx512(void) {
     );
     return (ebx >> 16) & 1;
 }
+#else
+#define check_avx512() 1
+#endif
 
 int main(void) {
     if (!check_avx512()) {
@@ -137,6 +143,7 @@ int main(void) {
         : "=m"(xdst) : "r"(val32) : "xmm0"
     );
     TEST_ASSERT(xdst.u32[0] == val32, "VMOVD xmm<-r32 failed: got %x", xdst.u32[0]);
+    TEST_ASSERT(xdst.u32[1] == 0 && xdst.u64[1] == 0, "VMOVD zeroes upper 96 bits of xmm");
 
     /* VMOVQ xmm <- r64 */
     memset(&xdst, 0, sizeof(xdst));
@@ -147,26 +154,87 @@ int main(void) {
         : "=m"(xdst) : "r"(val64) : "xmm1"
     );
     TEST_ASSERT(xdst.u64[0] == val64, "VMOVQ xmm<-r64 failed");
+    TEST_ASSERT(xdst.u64[1] == 0, "VMOVQ zeroes upper 64 bits of xmm");
 
     /* VMOVSS xmm */
     memset(&xdst, 0, sizeof(xdst));
     float fval = 3.14159f;
     __asm__ volatile (
         "vmovss %1, %%xmm2\n\t"
-        "vmovss %%xmm2, %0"
-        : "=m"(xdst.f32[0]) : "m"(fval) : "xmm2"
+        "vmovdqu %%xmm2, %0"
+        : "=m"(xdst) : "m"(fval) : "xmm2"
     );
     TEST_ASSERT(xdst.f32[0] == fval, "VMOVSS failed");
+    TEST_ASSERT(xdst.u32[1] == 0 && xdst.u64[1] == 0, "VMOVSS memory load zeroes upper xmm bits");
 
     /* VMOVSD xmm */
     memset(&xdst, 0, sizeof(xdst));
     double dval = 2.718281828;
     __asm__ volatile (
         "vmovsd %1, %%xmm3\n\t"
-        "vmovsd %%xmm3, %0"
-        : "=m"(xdst.f64[0]) : "m"(dval) : "xmm3"
+        "vmovdqu %%xmm3, %0"
+        : "=m"(xdst) : "m"(dval) : "xmm3"
     );
     TEST_ASSERT(xdst.f64[0] == dval, "VMOVSD failed");
+    TEST_ASSERT(xdst.u64[1] == 0, "VMOVSD memory load zeroes upper 64 bits of xmm");
+
+    /* Masked memory operations access only active lanes, including at a page boundary. */
+    long page_size = sysconf(_SC_PAGESIZE);
+    uint8_t *pages = mmap(NULL, (size_t)page_size * 2,
+                          PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    TEST_ASSERT(pages != MAP_FAILED, "allocate guard pages for masked VMOVDQU64");
+    if (pages != MAP_FAILED) {
+        int protected_ok = mprotect(pages + page_size, (size_t)page_size, PROT_NONE) == 0;
+        TEST_ASSERT(protected_ok, "protect second VMOVDQU64 guard page");
+        if (protected_ok) {
+            uint64_t *edge = (uint64_t *)(void *)(pages + page_size - sizeof(uint64_t));
+            *edge = UINT64_C(0x0123456789abcdef);
+            zmm_t merge_initial, loaded;
+            for (int i = 0; i < 8; i++) merge_initial.u64[i] = UINT64_C(0xfeed000000000000) + (uint64_t)i;
+            kmask = 1;
+            __asm__ volatile (
+                "kmovq %3,%%k1\n\tvmovdqu64 %1,%%zmm0\n\t"
+                "vmovdqu64 (%2),%%zmm0%{%%k1%}\n\tvmovdqu64 %%zmm0,%0"
+                : "=m"(loaded) : "m"(merge_initial), "r"(edge), "r"(kmask)
+                : "zmm0", "k1", "memory");
+            TEST_ASSERT(loaded.u64[0] == *edge, "masked VMOVDQU64 loads active edge lane");
+            for (int i = 1; i < 8; i++)
+                TEST_ASSERT(loaded.u64[i] == merge_initial.u64[i],
+                            "masked VMOVDQU64 suppresses inactive cross-page lane %d", i);
+
+            __asm__ volatile (
+                "kmovq %3,%%k1\n\tvmovdqu64 (%2),%%zmm0%{%%k1%}%{z%}\n\t"
+                "vmovdqu64 %%zmm0,%0"
+                : "=m"(loaded) : "m"(merge_initial), "r"(edge), "r"(kmask)
+                : "zmm0", "k1", "memory");
+            TEST_ASSERT(loaded.u64[0] == *edge, "zero-masked VMOVDQU64 active edge lane");
+            for (int i = 1; i < 8; i++)
+                TEST_ASSERT(loaded.u64[i] == 0,
+                            "zero-masked VMOVDQU64 inactive lane %d", i);
+
+            kmask = 0;
+            void *invalid = pages + page_size;
+            __asm__ volatile (
+                "kmovq %2,%%k1\n\tvmovdqu64 (%1),%%zmm0%{%%k1%}%{z%}\n\t"
+                "vmovdqu64 %%zmm0,%0"
+                : "=m"(loaded) : "r"(invalid), "r"(kmask)
+                : "zmm0", "k1", "memory");
+            for (int i = 0; i < 8; i++)
+                TEST_ASSERT(loaded.u64[i] == 0,
+                            "VMOVDQU64 k=0 suppresses PROT_NONE load lane %d", i);
+
+            for (int i = 0; i < 8; i++) src.u64[i] = UINT64_C(0xa500000000000000) + (uint64_t)i;
+            kmask = 1;
+            __asm__ volatile (
+                "kmovq %2,%%k1\n\tvmovdqu64 %1,%%zmm0\n\t"
+                "vmovdqu64 %%zmm0,(%0)%{%%k1%}"
+                : : "r"(edge), "m"(src), "r"(kmask)
+                : "zmm0", "k1", "memory");
+            TEST_ASSERT(*edge == src.u64[0],
+                        "masked VMOVDQU64 store writes active edge lane without touching guard page");
+        }
+        munmap(pages, (size_t)page_size * 2);
+    }
 
     TEST_END();
 }

@@ -139,6 +139,7 @@ static void test_cpuid_extended(void)
 static void test_cpuid_leaf7(void)
 {
     uint32_t eax, ebx, ecx, edx;
+    uint32_t max_subleaf;
     uint32_t max_leaf;
 
     TEST_START("CPUID - Structured Extended Features (leaf 7)");
@@ -171,8 +172,30 @@ static void test_cpuid_leaf7(void)
     printf("  SHA:       %s\n", (ebx & (1U << 29)) ? "yes" : "no");
     printf("  RDPID:     %s\n", (ecx & (1U << 22)) ? "yes" : "no");
 
-    /* Leaf 7 subleaf 0 EAX = max subleaf index */
-    TEST_ASSERT(1, "CPUID leaf 7 subleaf 0 executed successfully");
+    /* Leaf 7 subleaf 0 EAX = max subleaf index; repeat the same query exactly. */
+    max_subleaf = eax;
+    uint32_t eax2, ebx2, ecx2, edx2;
+    __asm__ volatile (
+        "cpuid"
+        : "=a"(eax2), "=b"(ebx2), "=c"(ecx2), "=d"(edx2)
+        : "a"(7), "c"(0));
+    TEST_ASSERT(eax == eax2 && ebx == ebx2 && ecx == ecx2 && edx == edx2,
+                "CPUID leaf 7 subleaf 0 is stable across repeated queries");
+
+    /* The first subleaf beyond the advertised maximum must read as zero. */
+    if (max_subleaf != UINT32_MAX) {
+        uint32_t invalid_eax, invalid_ebx, invalid_ecx, invalid_edx;
+        __asm__ volatile (
+            "cpuid"
+            : "=a"(invalid_eax), "=b"(invalid_ebx),
+              "=c"(invalid_ecx), "=d"(invalid_edx)
+            : "a"(7), "c"(max_subleaf + 1)
+        );
+        TEST_ASSERT(invalid_eax == 0 && invalid_ebx == 0 &&
+                    invalid_ecx == 0 && invalid_edx == 0,
+                    "CPUID leaf 7 out-of-range subleaf %u returns zero",
+                    max_subleaf + 1);
+    }
 }
 
 /* Test CPUID with different calling conventions: clobbers check */

@@ -111,6 +111,22 @@ static void test_shufpd_cross(void) {
     TEST_ASSERT(dst.f64[1] == 3.0, "shufpd $1 [1]: got %f", dst.f64[1]);
 }
 
+static void test_shufpd_high_immediate_bits(void) {
+    xmm_t a = { .u64 = {UINT64_C(0x0123456789abcdef), UINT64_C(0x1111111111111111)} };
+    xmm_t b = { .u64 = {UINT64_C(0x2222222222222222), UINT64_C(0xfedcba9876543210)} };
+    xmm_t dst;
+
+    /* SHUFPD only consumes imm8[1:0], so 0xff is equivalent to 3. */
+    __asm__ volatile (
+        "movdqa %1, %%xmm0\n\t"
+        "shufpd $0xff, %2, %%xmm0\n\t"
+        "movdqa %%xmm0, %0"
+        : "=m"(dst) : "m"(a), "m"(b) : "xmm0"
+    );
+    TEST_ASSERT(dst.u64[0] == a.u64[1], "shufpd $0xff: low lane selects a[1]");
+    TEST_ASSERT(dst.u64[1] == b.u64[1], "shufpd $0xff: high lane selects b[1]");
+}
+
 int main(void) {
     TEST_START("SHUFPS/SHUFPD instructions");
     test_shufps_identity();
@@ -119,5 +135,6 @@ int main(void) {
     test_shufpd_basic();
     test_shufpd_swap();
     test_shufpd_cross();
+    test_shufpd_high_immediate_bits();
     TEST_END();
 }

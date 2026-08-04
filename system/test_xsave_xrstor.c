@@ -16,8 +16,8 @@
 
 #include "../common.h"
 
-static int has_osxsave(void)
-{
+#if ENABLE_RUNTIME_CPU_CHECKS
+static int has_osxsave(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile (
         "cpuid"
@@ -26,6 +26,9 @@ static int has_osxsave(void)
     );
     return (ecx >> 27) & 1;
 }
+#else
+#define has_osxsave() 1
+#endif
 
 static uint64_t get_xcr0(void)
 {
@@ -121,7 +124,9 @@ static void test_xsave_xrstor_basic(void)
     memcpy(&xstate_bv, xsave_area + 512, sizeof(xstate_bv));
     printf("  XSTATE_BV after XSAVE: 0x%016" PRIX64 "\n", xstate_bv);
 
-    TEST_ASSERT(1, "XSAVE executed successfully");
+    TEST_ASSERT((xstate_bv & ~UINT64_C(0x3)) == 0,
+                "XSAVE x87+SSE request must not set unrelated XSTATE_BV bits: 0x%" PRIX64,
+                xstate_bv);
 
     /* Now restore the state */
     __asm__ volatile (
@@ -130,8 +135,6 @@ static void test_xsave_xrstor_basic(void)
         : "m"(*xsave_area), "a"(mask_lo), "d"(mask_hi)
         : "memory"
     );
-
-    TEST_ASSERT(1, "XRSTOR executed successfully");
 
     free(xsave_area);
 }
@@ -318,6 +321,69 @@ static void test_xsave_zero_mask(void)
     free(xsave_area);
 }
 
+__attribute__((target("avx,avx512f")))
+static void test_xsave_extended_roundtrips(void)
+{
+    uint64_t xcr0 = get_xcr0();
+    uint32_t size = get_xsave_size();
+    uint8_t *area = NULL;
+    TEST_START("XSAVE/XRSTOR - x87, YMM, opmask/ZMM and PKRU round-trips");
+    if (posix_memalign((void **)&area, 64, size) != 0) {
+        TEST_ASSERT(0, "extended XSAVE allocation");
+        return;
+    }
+
+    memset(area, 0, size);
+    long double x87_before = 0x9.abcdef012345678p-3L, x87_after = 0.0L;
+    uint32_t lo = 1, hi = 0;
+    __asm__ volatile("fldt %0\n\txsave (%1)" : : "m"(x87_before), "r"(area), "a"(lo), "d"(hi) : "memory");
+    __asm__ volatile("fstp %%st(0)\n\txrstor (%1)\n\tfstpt %0" : "=m"(x87_after) : "r"(area), "a"(lo), "d"(hi) : "memory");
+    TEST_ASSERT(x87_after == x87_before, "XSAVE x87 ST0 round-trip");
+
+    if (xcr0 & (1u << 2)) {
+        ymm_t before, after;
+        for (int i = 0; i < 4; i++) before.u64[i] = UINT64_C(0x1111111111111111) * (uint64_t)(i + 1);
+        memset(&after, 0, sizeof(after)); memset(area, 0, size);
+        lo = 0x7;
+        __asm__ volatile("vmovdqu (%0),%%ymm0\n\txsave (%1)" : : "r"(&before), "r"(area), "a"(lo), "d"(hi) : "ymm0", "memory");
+        __asm__ volatile("vpxor %%ymm0,%%ymm0,%%ymm0\n\txrstor (%1)\n\tvmovdqu %%ymm0,(%0)"
+            : : "r"(&after), "r"(area), "a"(lo), "d"(hi) : "ymm0", "memory");
+        TEST_ASSERT(memcmp(&before, &after, sizeof(before)) == 0, "XSAVE YMM0 including upper 128 bits round-trip");
+        uint64_t xstate_bv; memcpy(&xstate_bv, area + 512, sizeof(xstate_bv));
+        TEST_ASSERT(xstate_bv & (1u << 2), "XSAVE YMM state sets XSTATE_BV bit 2");
+    }
+
+    if ((xcr0 & 0xe0) == 0xe0) {
+        uint8_t before[64] __attribute__((aligned(64)));
+        uint8_t after[64] __attribute__((aligned(64)));
+        uint64_t k_before = 0xa5, k_after = 0;
+        for (int i = 0; i < 64; i++) before[i] = (uint8_t)(i * 3 + 1);
+        memset(after, 0, sizeof(after)); memset(area, 0, size);
+        lo = (uint32_t)(xcr0 & 0xff);
+        __asm__ volatile("vmovdqu64 (%0),%%zmm16\n\tkmovq %2,%%k1\n\txsave (%1)"
+            : : "r"(before), "r"(area), "r"(k_before), "a"(lo), "d"(hi) : "zmm16", "k1", "memory");
+        __asm__ volatile("vpxord %%zmm16,%%zmm16,%%zmm16\n\tkxorw %%k1,%%k1,%%k1\n\txrstor (%2)\n\tvmovdqu64 %%zmm16,%0\n\tkmovq %%k1,%1"
+            : "=m"(*(uint8_t (*)[64])after), "=r"(k_after) : "r"(area), "a"(lo), "d"(hi) : "zmm16", "k1", "memory");
+        TEST_ASSERT(memcmp(before, after, sizeof(before)) == 0, "XSAVE ZMM16 round-trip");
+        TEST_ASSERT((k_after & 0xff) == k_before, "XSAVE opmask k1 round-trip");
+    }
+
+    if (xcr0 & (1u << 9)) {
+        uint32_t pkru_before, pkru_after;
+        memset(area, 0, size);
+        __asm__ volatile("xor %%ecx,%%ecx\n\trdpkru" : "=a"(pkru_before) : : "ecx", "edx");
+        lo = 1u << 9;
+        __asm__ volatile("xsave (%0)" : : "r"(area), "a"(lo), "d"(hi) : "memory");
+        uint32_t alternate = pkru_before ^ (3u << 30);
+        __asm__ volatile("xor %%ecx,%%ecx\n\txor %%edx,%%edx\n\twrpkru" : : "a"(alternate) : "ecx", "edx", "memory");
+        __asm__ volatile("xrstor (%0)" : : "r"(area), "a"(lo), "d"(hi) : "memory");
+        __asm__ volatile("xor %%ecx,%%ecx\n\trdpkru" : "=a"(pkru_after) : : "ecx", "edx");
+        TEST_ASSERT(pkru_after == pkru_before, "XSAVE PKRU round-trip");
+    }
+
+    free(area);
+}
+
 int main(void)
 {
     printf("Checking XSAVE/OSXSAVE support...\n");
@@ -335,6 +401,7 @@ int main(void)
     test_xsave_xrstor_sse_roundtrip();
     test_xsave_legacy_region();
     test_xsave_zero_mask();
+    test_xsave_extended_roundtrips();
 
     TEST_END();
 }

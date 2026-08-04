@@ -9,6 +9,8 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <signal.h>
+#include <setjmp.h>
 #include "../common.h"
 
 typedef union {
@@ -24,10 +26,49 @@ typedef union {
     double f64[8];
 } zmm_t __attribute__((aligned(64)));
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx512(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile ("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
     return (ebx >> 16) & 1;
+}
+#else
+#define check_avx512() 1
+#endif
+
+static sigjmp_buf movnt_fault_env;
+static volatile sig_atomic_t got_movnt_fault;
+
+static void movnt_fault_handler(int sig) {
+    (void)sig;
+    got_movnt_fault = 1;
+    siglongjmp(movnt_fault_env, 1);
+}
+
+static void test_zmm_alignment_faults(void) {
+    unsigned char storage[160] __attribute__((aligned(64))) = {0};
+    volatile zmm_t *misaligned = (volatile zmm_t *)(void *)(storage + 4);
+    zmm_t src = { .u64 = {1,2,3,4,5,6,7,8} };
+    struct sigaction sa, old_segv, old_bus;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = movnt_fault_handler;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGSEGV, &sa, &old_segv);
+    sigaction(SIGBUS, &sa, &old_bus);
+
+    got_movnt_fault = 0;
+    if (sigsetjmp(movnt_fault_env, 1) == 0)
+        __asm__ volatile ("vmovdqu64 %1, %%zmm0\n\tvmovntdq %%zmm0, %0"
+                          : "=m"(*misaligned) : "m"(src) : "zmm0", "memory");
+    TEST_ASSERT(got_movnt_fault, "misaligned VMOVNTDQ zmm store raises #GP");
+
+    got_movnt_fault = 0;
+    if (sigsetjmp(movnt_fault_env, 1) == 0)
+        __asm__ volatile ("vmovntdqa %0, %%zmm0" : : "m"(*misaligned) : "zmm0", "memory");
+    TEST_ASSERT(got_movnt_fault, "misaligned VMOVNTDQA zmm load raises #GP");
+
+    sigaction(SIGSEGV, &old_segv, NULL);
+    sigaction(SIGBUS, &old_bus, NULL);
 }
 
 int main(void) {
@@ -44,8 +85,8 @@ int main(void) {
     memset(&dst, 0, sizeof(dst));
     __asm__ volatile (
         "vmovdqa64 %1, %%zmm0\n\t"
-        "vmovntdq %%zmm0, %0"
-        : "=m"(dst) : "m"(src) : "zmm0"
+        "vmovntdq %%zmm0, %0\n\t" "sfence"
+        : "=m"(dst) : "m"(src) : "zmm0", "memory"
     );
     TEST_ASSERT(memcmp(&src, &dst, 64) == 0, "VMOVNTDQ store failed");
 
@@ -63,8 +104,8 @@ int main(void) {
     memset(&dst, 0, sizeof(dst));
     __asm__ volatile (
         "vmovapd %1, %%zmm2\n\t"
-        "vmovntpd %%zmm2, %0"
-        : "=m"(dst) : "m"(src) : "zmm2"
+        "vmovntpd %%zmm2, %0\n\t" "sfence"
+        : "=m"(dst) : "m"(src) : "zmm2", "memory"
     );
     TEST_ASSERT(memcmp(&src, &dst, 64) == 0, "VMOVNTPD store failed");
 
@@ -73,8 +114,8 @@ int main(void) {
     memset(&dst, 0, sizeof(dst));
     __asm__ volatile (
         "vmovaps %1, %%zmm3\n\t"
-        "vmovntps %%zmm3, %0"
-        : "=m"(dst) : "m"(src) : "zmm3"
+        "vmovntps %%zmm3, %0\n\t" "sfence"
+        : "=m"(dst) : "m"(src) : "zmm3", "memory"
     );
     TEST_ASSERT(memcmp(&src, &dst, 64) == 0, "VMOVNTPS store failed");
 
@@ -83,8 +124,8 @@ int main(void) {
     memset(&dst, 0xFF, sizeof(dst));
     __asm__ volatile (
         "vmovdqa64 %1, %%zmm4\n\t"
-        "vmovntdq %%zmm4, %0"
-        : "=m"(dst) : "m"(src) : "zmm4"
+        "vmovntdq %%zmm4, %0\n\t" "sfence"
+        : "=m"(dst) : "m"(src) : "zmm4", "memory"
     );
     TEST_ASSERT(memcmp(&src, &dst, 64) == 0, "VMOVNTDQ all-zeros failed");
 
@@ -93,10 +134,12 @@ int main(void) {
     memset(&dst, 0, sizeof(dst));
     __asm__ volatile (
         "vmovdqa64 %1, %%zmm5\n\t"
-        "vmovntdq %%zmm5, %0"
-        : "=m"(dst) : "m"(src) : "zmm5"
+        "vmovntdq %%zmm5, %0\n\t" "sfence"
+        : "=m"(dst) : "m"(src) : "zmm5", "memory"
     );
     TEST_ASSERT(memcmp(&src, &dst, 64) == 0, "VMOVNTDQ all-ones failed");
+
+    test_zmm_alignment_faults();
 
     TEST_END();
 }

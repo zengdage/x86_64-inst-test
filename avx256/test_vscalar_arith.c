@@ -7,13 +7,29 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <math.h>
+#include <float.h>
 #include "../common.h"
 
+#define RUN_SCALAR_SS(op, lhs, rhs, out) do { \
+    __asm__ volatile("vmovaps %1, %%xmm0\n\t" "vmovaps %2, %%xmm1\n\t" \
+        #op " %%xmm1, %%xmm0, %%xmm2\n\t" "vmovaps %%xmm2, %0" \
+        : "=m"(out) : "m"(lhs), "m"(rhs) : "xmm0", "xmm1", "xmm2"); \
+} while (0)
+#define RUN_SCALAR_SD(op, lhs, rhs, out) do { \
+    __asm__ volatile("vmovapd %1, %%xmm0\n\t" "vmovapd %2, %%xmm1\n\t" \
+        #op " %%xmm1, %%xmm0, %%xmm2\n\t" "vmovapd %%xmm2, %0" \
+        : "=m"(out) : "m"(lhs), "m"(rhs) : "xmm0", "xmm1", "xmm2"); \
+} while (0)
+
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__("cpuid" : "=a"(eax),"=b"(ebx),"=c"(ecx),"=d"(edx) : "a"(1),"c"(0));
     return (ecx >> 28) & 1;
 }
+#else
+#define check_avx() 1
+#endif
 
 static void test_vaddsd(void) {
     TEST_START("VADDSD");
@@ -177,6 +193,63 @@ static void test_vdivss(void) {
     TEST_ASSERT(r == 3.0f, "vdivss mem r=%f", r);
 }
 
+static void test_scalar_special_values(void) {
+    xmm_t a = { .f32 = {INFINITY, 11.0f, 22.0f, 33.0f} };
+    xmm_t b = { .f32 = {-INFINITY, 1.0f, 2.0f, 3.0f} };
+    xmm_t r;
+    RUN_SCALAR_SS(vaddss, a, b, r);
+    TEST_ASSERT(isnan(r.f32[0]), "vaddss +Inf+-Inf is NaN");
+    TEST_ASSERT(r.f32[1] == 11.0f && r.f32[2] == 22.0f && r.f32[3] == 33.0f,
+        "vaddss upper lanes copied from first source");
+    b.f32[0] = INFINITY;
+    RUN_SCALAR_SS(vsubss, a, b, r);
+    TEST_ASSERT(isnan(r.f32[0]), "vsubss Inf-Inf is NaN");
+    a.f32[0] = 0.0f; b.f32[0] = INFINITY;
+    RUN_SCALAR_SS(vmulss, a, b, r);
+    TEST_ASSERT(isnan(r.f32[0]), "vmulss 0*Inf is NaN");
+    a.f32[0] = INFINITY; b.f32[0] = INFINITY;
+    RUN_SCALAR_SS(vdivss, a, b, r);
+    TEST_ASSERT(isnan(r.f32[0]), "vdivss Inf/Inf is NaN");
+    a.f32[0] = FLT_MAX; b.f32[0] = 2.0f;
+    RUN_SCALAR_SS(vmulss, a, b, r);
+    TEST_ASSERT(isinf(r.f32[0]) && !signbit(r.f32[0]), "vmulss overflow");
+    a.f32[0] = FLT_MIN; b.f32[0] = 0.5f;
+    RUN_SCALAR_SS(vmulss, a, b, r);
+    TEST_ASSERT(r.f32[0] == FLT_MIN / 2.0f, "vmulss subnormal");
+    a.f32[0] = -0.0f; b.f32[0] = -0.0f;
+    RUN_SCALAR_SS(vaddss, a, b, r);
+    TEST_ASSERT(r.f32[0] == 0.0f && signbit(r.f32[0]), "vaddss negative zero");
+    a.f32[0] = -1.0f; b.f32[0] = 0.0f;
+    RUN_SCALAR_SS(vdivss, a, b, r);
+    TEST_ASSERT(isinf(r.f32[0]) && signbit(r.f32[0]), "vdivss -1/+0 is -Inf");
+
+    a.f64[0] = INFINITY; a.f64[1] = 123.0;
+    b.f64[0] = -INFINITY; b.f64[1] = 456.0;
+    RUN_SCALAR_SD(vaddsd, a, b, r);
+    TEST_ASSERT(isnan(r.f64[0]) && r.f64[1] == 123.0, "vaddsd invalid and upper-lane preservation");
+    b.f64[0] = INFINITY;
+    RUN_SCALAR_SD(vsubsd, a, b, r);
+    TEST_ASSERT(isnan(r.f64[0]), "vsubsd Inf-Inf is NaN");
+    a.f64[0] = 0.0; b.f64[0] = INFINITY;
+    RUN_SCALAR_SD(vmulsd, a, b, r);
+    TEST_ASSERT(isnan(r.f64[0]), "vmulsd 0*Inf is NaN");
+    a.f64[0] = INFINITY; b.f64[0] = INFINITY;
+    RUN_SCALAR_SD(vdivsd, a, b, r);
+    TEST_ASSERT(isnan(r.f64[0]), "vdivsd Inf/Inf is NaN");
+    a.f64[0] = DBL_MAX; b.f64[0] = 2.0;
+    RUN_SCALAR_SD(vmulsd, a, b, r);
+    TEST_ASSERT(isinf(r.f64[0]), "vmulsd overflow");
+    a.f64[0] = DBL_MIN; b.f64[0] = 0.5;
+    RUN_SCALAR_SD(vmulsd, a, b, r);
+    TEST_ASSERT(r.f64[0] == DBL_MIN / 2.0, "vmulsd subnormal");
+    a.f64[0] = -0.0; b.f64[0] = -0.0;
+    RUN_SCALAR_SD(vaddsd, a, b, r);
+    TEST_ASSERT(r.f64[0] == 0.0 && signbit(r.f64[0]), "vaddsd negative zero");
+    a.f64[0] = -1.0; b.f64[0] = 0.0;
+    RUN_SCALAR_SD(vdivsd, a, b, r);
+    TEST_ASSERT(isinf(r.f64[0]) && signbit(r.f64[0]), "vdivsd -1/+0 is -Inf");
+}
+
 int main(void) {
     if (!check_avx()) { printf("AVX not supported\n"); return 1; }
     test_vaddsd();
@@ -187,5 +260,6 @@ int main(void) {
     test_vmulss();
     test_vdivsd();
     test_vdivss();
+    test_scalar_special_values();
     TEST_END();
 }

@@ -66,6 +66,26 @@ static void test_fence_no_flags(void) {
                 "fences: flags unchanged");
 }
 
+static void test_fence_encodings_and_registers(void) {
+    const unsigned char *bytes;
+    uint64_t value = UINT64_C(0x0123456789abcdef);
+    __asm__ volatile (
+        "jmp 1f\n\t"
+        "0: lfence\n\t" "mfence\n\t" "sfence\n\t"
+        "1: leaq 0b(%%rip), %0\n\t"
+        "lfence\n\t" "mfence\n\t" "sfence"
+        : "=r"(bytes), "+r"(value)
+        :
+        : "memory");
+    static const unsigned char expected[] = {
+        0x0f, 0xae, 0xe8, 0x0f, 0xae, 0xf0, 0x0f, 0xae, 0xf8
+    };
+    TEST_ASSERT(memcmp(bytes, expected, sizeof(expected)) == 0,
+                "LFENCE/MFENCE/SFENCE exact encodings");
+    TEST_ASSERT(value == UINT64_C(0x0123456789abcdef),
+                "Fence sequence preserves general-purpose registers");
+}
+
 int main(void) {
     TEST_START("LFENCE/MFENCE/SFENCE instructions");
     test_lfence();
@@ -73,5 +93,6 @@ int main(void) {
     test_sfence();
     test_fence_sequence();
     test_fence_no_flags();
+    test_fence_encodings_and_registers();
     TEST_END();
 }

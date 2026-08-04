@@ -330,6 +330,47 @@ static void test_direction_flag(void) {
     TEST_ASSERT(memcmp(dst, src, 5) == 0, "backward rep movsb with STD");
 }
 
+static void test_zero_count_rep(void) {
+    uint8_t src[] = {0x11, 0x22};
+    uint8_t dst[] = {0xaa, 0xbb};
+    uintptr_t src_after, dst_after;
+    uint64_t count_after;
+    uint64_t flags;
+
+    __asm__ volatile (
+        "leaq %3, %%rsi\n\t"
+        "leaq %4, %%rdi\n\t"
+        "xorq %%rcx, %%rcx\n\t"
+        "cld\n\t"
+        "rep movsb\n\t"
+        "movq %%rsi, %0\n\t"
+        "movq %%rdi, %1\n\t"
+        "movq %%rcx, %2"
+        : "=r"(src_after), "=r"(dst_after), "=r"(count_after), "+m"(src), "+m"(dst)
+        :
+        : "rcx", "rsi", "rdi", "cc", "memory"
+    );
+    TEST_ASSERT(dst[0] == 0xaa && dst[1] == 0xbb,
+                "rep movsb RCX=0: destination unchanged");
+    TEST_ASSERT(src_after == (uintptr_t)src && dst_after == (uintptr_t)dst && count_after == 0,
+                "rep movsb RCX=0: pointers and count unchanged");
+
+    /* With RCX=0, REPE CMPSB performs no comparison and preserves flags. */
+    __asm__ volatile (
+        "cmpq %%rax, %%rax\n\t"      /* ZF=1 */
+        "leaq %1, %%rsi\n\t"
+        "leaq %2, %%rdi\n\t"
+        "xorq %%rcx, %%rcx\n\t"     /* also leaves ZF=1 */
+        "repe cmpsb\n\t"
+        "pushfq\n\t"
+        "popq %0"
+        : "=r"(flags)
+        : "m"(src), "m"(dst)
+        : "rax", "rcx", "rsi", "rdi", "cc"
+    );
+    TEST_ASSERT(flags & ZF_FLAG, "repe cmpsb RCX=0: ZF preserved");
+}
+
 int main(void) {
     TEST_START("String instructions");
     test_movsb();
@@ -348,5 +389,6 @@ int main(void) {
     test_cmpsw();
     test_scasb();
     test_direction_flag();
+    test_zero_count_rep();
     TEST_END();
 }

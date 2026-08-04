@@ -8,11 +8,15 @@
 #include <stdio.h>
 #include "../common.h"
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__("cpuid" : "=a"(eax),"=b"(ebx),"=c"(ecx),"=d"(edx) : "a"(1),"c"(0));
     return (ecx >> 28) & 1;
 }
+#else
+#define check_avx() 1
+#endif
 
 static void test_vandpd(void) {
     TEST_START("VANDPD (256-bit)");
@@ -192,6 +196,41 @@ static void test_vxorps(void) {
     TEST_ASSERT(r[3] == 0xFFFFFFFFU, "vxorps r[3]=%08x", r[3]);
 }
 
+static void test_vlogical_all_lanes_reference(void) {
+    ymm_t a, b, vand, vandn, vor, vxor;
+    for (int i = 0; i < 8; i++) {
+        a.u32[i] = UINT32_C(0x80000001) ^ ((uint32_t)i * UINT32_C(0x11111111));
+        b.u32[i] = UINT32_C(0x7ffffffe) ^ ((uint32_t)i * UINT32_C(0x01020408));
+    }
+    __asm__ volatile (
+        "vmovdqu %4, %%ymm0\n\t" "vmovdqu %5, %%ymm1\n\t"
+        "vandps %%ymm1, %%ymm0, %%ymm2\n\t"
+        "vandnps %%ymm1, %%ymm0, %%ymm3\n\t"
+        "vorps %%ymm1, %%ymm0, %%ymm4\n\t"
+        "vxorps %%ymm1, %%ymm0, %%ymm5\n\t"
+        "vmovdqu %%ymm2, %0\n\t" "vmovdqu %%ymm3, %1\n\t"
+        "vmovdqu %%ymm4, %2\n\t" "vmovdqu %%ymm5, %3"
+        : "=m"(vand), "=m"(vandn), "=m"(vor), "=m"(vxor)
+        : "m"(a), "m"(b) : "ymm0","ymm1","ymm2","ymm3","ymm4","ymm5");
+    for (int i = 0; i < 8; i++) {
+        TEST_ASSERT(vand.u32[i] == (a.u32[i] & b.u32[i]), "vandps scalar reference lane %d", i);
+        TEST_ASSERT(vandn.u32[i] == (~a.u32[i] & b.u32[i]), "vandnps scalar reference lane %d", i);
+        TEST_ASSERT(vor.u32[i] == (a.u32[i] | b.u32[i]), "vorps scalar reference lane %d", i);
+        TEST_ASSERT(vxor.u32[i] == (a.u32[i] ^ b.u32[i]), "vxorps scalar reference lane %d", i);
+    }
+
+    ymm_t initial, vex128;
+    memset(&initial, 0xa5, sizeof(initial));
+    __asm__ volatile (
+        "vmovdqu %1, %%ymm2\n\t" "vmovdqu %2, %%xmm0\n\t"
+        "vxorps %3, %%xmm0, %%xmm2\n\t" "vmovdqu %%ymm2, %0"
+        : "=m"(vex128) : "m"(initial), "m"(a), "m"(b) : "xmm0", "ymm2");
+    for (int i = 0; i < 4; i++)
+        TEST_ASSERT(vex128.u32[i] == (a.u32[i] ^ b.u32[i]), "vxorps xmm lane %d", i);
+    for (int i = 4; i < 8; i++)
+        TEST_ASSERT(vex128.u32[i] == 0, "VEX.128 vxorps zeroes upper ymm lane %d", i);
+}
+
 int main(void) {
     if (!check_avx()) { printf("AVX not supported\n"); return 1; }
     test_vandpd();
@@ -202,5 +241,6 @@ int main(void) {
     test_vorps();
     test_vxorpd();
     test_vxorps();
+    test_vlogical_all_lanes_reference();
     TEST_END();
 }

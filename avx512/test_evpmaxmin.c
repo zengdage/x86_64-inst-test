@@ -25,11 +25,15 @@ typedef union {
     double f64[8];
 } zmm_t __attribute__((aligned(64)));
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx512(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile ("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
     return ((ebx >> 16) & 1) && ((ebx >> 30) & 1);
 }
+#else
+#define check_avx512() 1
+#endif
 
 int main(void) {
     if (!check_avx512()) {
@@ -138,6 +142,58 @@ int main(void) {
         TEST_ASSERT(dst.u64[i] == e, "VPMINUQ lane %d: %llu != %llu", i,
             (unsigned long long)dst.u64[i], (unsigned long long)e);
     }
+
+    /* Previously missing signed/unsigned variants, with exact extrema and ties. */
+    for (int i = 0; i < 32; i++) {
+        a.i16[i] = (i % 3 == 0) ? INT16_MIN : (i % 3 == 1 ? INT16_MAX : 7);
+        b.i16[i] = (i % 3 == 0) ? INT16_MAX : (i % 3 == 1 ? INT16_MIN : 7);
+    }
+    __asm__ volatile ("vmovdqu16 %1,%%zmm0\n\tvmovdqu16 %2,%%zmm1\n\tvpminsw %%zmm1,%%zmm0,%%zmm2\n\tvmovdqu16 %%zmm2,%0"
+        : "=m"(dst) : "m"(a), "m"(b) : "zmm0", "zmm1", "zmm2");
+    for (int i = 0; i < 32; i++) TEST_ASSERT(dst.i16[i] == (a.i16[i] < b.i16[i] ? a.i16[i] : b.i16[i]), "VPMINSW extrema lane %d", i);
+
+    for (int i = 0; i < 16; i++) {
+        a.i32[i] = (i % 3 == 0) ? INT32_MIN : (i % 3 == 1 ? INT32_MAX : -9);
+        b.i32[i] = (i % 3 == 0) ? INT32_MAX : (i % 3 == 1 ? INT32_MIN : -9);
+    }
+    __asm__ volatile ("vmovdqu32 %1,%%zmm0\n\tvmovdqu32 %2,%%zmm1\n\tvpmaxsd %%zmm1,%%zmm0,%%zmm2\n\tvmovdqu32 %%zmm2,%0"
+        : "=m"(dst) : "m"(a), "m"(b) : "zmm0", "zmm1", "zmm2");
+    for (int i = 0; i < 16; i++) TEST_ASSERT(dst.i32[i] == (a.i32[i] > b.i32[i] ? a.i32[i] : b.i32[i]), "VPMAXSD extrema lane %d", i);
+
+    for (int i = 0; i < 8; i++) {
+        a.i64[i] = (i % 3 == 0) ? INT64_MIN : (i % 3 == 1 ? INT64_MAX : 11);
+        b.i64[i] = (i % 3 == 0) ? INT64_MAX : (i % 3 == 1 ? INT64_MIN : 11);
+    }
+    __asm__ volatile ("vmovdqu64 %1,%%zmm0\n\tvmovdqu64 %2,%%zmm1\n\tvpminsq %%zmm1,%%zmm0,%%zmm2\n\tvmovdqu64 %%zmm2,%0"
+        : "=m"(dst) : "m"(a), "m"(b) : "zmm0", "zmm1", "zmm2");
+    for (int i = 0; i < 8; i++) TEST_ASSERT(dst.i64[i] == (a.i64[i] < b.i64[i] ? a.i64[i] : b.i64[i]), "VPMINSQ extrema lane %d", i);
+
+    for (int i = 0; i < 64; i++) { a.u8[i] = (i % 3 == 0) ? 0 : (i % 3 == 1 ? UINT8_MAX : 42); b.u8[i] = (i % 3 == 0) ? UINT8_MAX : (i % 3 == 1 ? 0 : 42); }
+    __asm__ volatile ("vmovdqu8 %1,%%zmm0\n\tvmovdqu8 %2,%%zmm1\n\tvpminub %%zmm1,%%zmm0,%%zmm2\n\tvmovdqu8 %%zmm2,%0"
+        : "=m"(dst) : "m"(a), "m"(b) : "zmm0", "zmm1", "zmm2");
+    for (int i = 0; i < 64; i++) TEST_ASSERT(dst.u8[i] == (a.u8[i] < b.u8[i] ? a.u8[i] : b.u8[i]), "VPMINUB extrema lane %d", i);
+
+    for (int i = 0; i < 32; i++) { a.u16[i] = (i % 3 == 0) ? 0 : (i % 3 == 1 ? UINT16_MAX : 99); b.u16[i] = (i % 3 == 0) ? UINT16_MAX : (i % 3 == 1 ? 0 : 99); }
+    __asm__ volatile ("vmovdqu16 %1,%%zmm0\n\tvmovdqu16 %2,%%zmm1\n\tvpmaxuw %%zmm1,%%zmm0,%%zmm2\n\tvmovdqu16 %%zmm2,%0"
+        : "=m"(dst) : "m"(a), "m"(b) : "zmm0", "zmm1", "zmm2");
+    for (int i = 0; i < 32; i++) TEST_ASSERT(dst.u16[i] == (a.u16[i] > b.u16[i] ? a.u16[i] : b.u16[i]), "VPMAXUW extrema lane %d", i);
+
+    for (int i = 0; i < 16; i++) { a.u32[i] = (i % 3 == 0) ? 0 : (i % 3 == 1 ? UINT32_MAX : 123); b.u32[i] = (i % 3 == 0) ? UINT32_MAX : (i % 3 == 1 ? 0 : 123); }
+    __asm__ volatile ("vmovdqu32 %1,%%zmm0\n\tvmovdqu32 %2,%%zmm1\n\tvpminud %%zmm1,%%zmm0,%%zmm2\n\tvmovdqu32 %%zmm2,%0"
+        : "=m"(dst) : "m"(a), "m"(b) : "zmm0", "zmm1", "zmm2");
+    for (int i = 0; i < 16; i++) TEST_ASSERT(dst.u32[i] == (a.u32[i] < b.u32[i] ? a.u32[i] : b.u32[i]), "VPMINUD extrema lane %d", i);
+
+    for (int i = 0; i < 8; i++) { a.u64[i] = (i % 3 == 0) ? 0 : (i % 3 == 1 ? UINT64_MAX : 321); b.u64[i] = (i % 3 == 0) ? UINT64_MAX : (i % 3 == 1 ? 0 : 321); }
+    __asm__ volatile ("vmovdqu64 %1,%%zmm0\n\tvmovdqu64 %2,%%zmm1\n\tvpmaxuq %%zmm1,%%zmm0,%%zmm2\n\tvmovdqu64 %%zmm2,%0"
+        : "=m"(dst) : "m"(a), "m"(b) : "zmm0", "zmm1", "zmm2");
+    for (int i = 0; i < 8; i++) TEST_ASSERT(dst.u64[i] == (a.u64[i] > b.u64[i] ? a.u64[i] : b.u64[i]), "VPMAXUQ extrema lane %d", i);
+
+    zmm_t initial;
+    for (int i = 0; i < 16; i++) { a.i32[i] = i; b.i32[i] = 100 + i; initial.i32[i] = -777; }
+    uint64_t kmask = 0x8001;
+    __asm__ volatile ("kmovq %4,%%k1\n\tvmovdqu32 %1,%%zmm0\n\tvmovdqu32 %2,%%zmm1\n\tvmovdqu32 %3,%%zmm2\n\tvpmaxsd %%zmm1,%%zmm0,%%zmm2%{%%k1%}\n\tvmovdqu32 %%zmm2,%0"
+        : "=m"(dst) : "m"(a), "m"(b), "m"(initial), "r"(kmask) : "zmm0", "zmm1", "zmm2", "k1");
+    for (int i = 0; i < 16; i++) TEST_ASSERT(dst.i32[i] == ((i == 0 || i == 15) ? b.i32[i] : -777), "VPMAXSD merge mask lane %d", i);
 
     TEST_END();
 }

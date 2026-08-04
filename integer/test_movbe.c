@@ -98,6 +98,25 @@ static void test_movbe_load_16(void) {
     TEST_ASSERT(result == 0x0201, "movbe load 16: 0x0102 => 0x%04x", result);
 }
 
+static void test_movbe_store_16_and_flags(void) {
+    uint16_t dst = 0;
+    uint32_t loaded;
+    uint64_t before, after;
+    uint32_t src = UINT32_C(0x01020304);
+    __asm__ volatile (
+        "movw $0x1234, %%ax\n\t" "movbe %%ax, %0\n\t"
+        "movq $0x8d5, %%r11\n\t" "pushq %%r11\n\t" "popfq\n\t"
+        "pushfq\n\t" "popq %2\n\t" "movbe %4, %%eax\n\t"
+        "pushfq\n\t" "popq %3\n\t" "movl %%eax, %1"
+        : "=m"(dst), "=r"(loaded), "=&r"(before), "=&r"(after)
+        : "m"(src)
+        : "rax", "r11", "cc");
+    TEST_ASSERT(dst == UINT16_C(0x3412), "movbe store16: got %#x", dst);
+    TEST_ASSERT(loaded == UINT32_C(0x04030201), "movbe load used in flags test");
+    uint64_t mask = CF_FLAG | PF_FLAG | AF_FLAG | ZF_FLAG | SF_FLAG | OF_FLAG;
+    TEST_ASSERT((before & mask) == (after & mask), "movbe preserves status flags");
+}
+
 int main(void) {
     TEST_START("MOVBE instruction");
     test_movbe_load_32();
@@ -106,5 +125,6 @@ int main(void) {
     test_movbe_store_64();
     test_movbe_roundtrip();
     test_movbe_load_16();
+    test_movbe_store_16_and_flags();
     TEST_END();
 }

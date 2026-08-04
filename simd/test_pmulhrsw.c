@@ -10,6 +10,11 @@
  */
 #include "../common.h"
 
+static int16_t pmulhrsw_reference(int16_t a, int16_t b) {
+    int32_t product = (int32_t)a * (int32_t)b;
+    return (int16_t)((product + INT32_C(0x4000)) >> 15);
+}
+
 static void test_pmulhrsw_basic(void) {
     xmm_t a = { .i16 = {16384, -16384, 32767, -32768, 1, -1, 0, 100} };
     xmm_t b = { .i16 = {16384, 16384, 32767, 32767, 1, 1, 1, 100} };
@@ -68,10 +73,28 @@ static void test_pmulhrsw_zero(void) {
     }
 }
 
+static void test_pmulhrsw_rounding_boundaries(void) {
+    xmm_t a = { .i16 = {INT16_MIN, INT16_MAX, 1, -1, 0x4000, -0x4000, 0x2000, -0x2000} };
+    xmm_t b = { .i16 = {INT16_MIN, INT16_MAX, INT16_MAX, INT16_MAX,
+                         1, 1, 2, 2} };
+    xmm_t dst;
+    __asm__ volatile (
+        "movdqu %1, %%xmm0\n\t" "pmulhrsw %2, %%xmm0\n\t" "movdqu %%xmm0, %0"
+        : "=m"(dst) : "m"(a), "m"(b) : "xmm0");
+    for (int i = 0; i < 8; i++) {
+        int16_t expected = pmulhrsw_reference(a.i16[i], b.i16[i]);
+        TEST_ASSERT(dst.i16[i] == expected,
+                    "pmulhrsw scalar reference lane %d: %d != %d", i, dst.i16[i], expected);
+    }
+    TEST_ASSERT(dst.u16[0] == UINT16_C(0x8000),
+                "pmulhrsw INT16_MIN*INT16_MIN wraps to 0x8000");
+}
+
 int main(void) {
     TEST_START("PMULHRSW instruction (SSSE3)");
     test_pmulhrsw_basic();
     test_pmulhrsw_identity();
     test_pmulhrsw_zero();
+    test_pmulhrsw_rounding_boundaries();
     TEST_END();
 }

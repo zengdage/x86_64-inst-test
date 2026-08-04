@@ -8,11 +8,15 @@
 #include <stdio.h>
 #include "../common.h"
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__("cpuid" : "=a"(eax),"=b"(ebx),"=c"(ecx),"=d"(edx) : "a"(1),"c"(0));
     return (ecx >> 28) & 1;
 }
+#else
+#define check_avx() 1
+#endif
 
 static void test_vmovsd(void) {
     TEST_START("VMOVSD (load/store/reg-reg)");
@@ -153,6 +157,42 @@ static void test_vmovlps(void) {
     TEST_ASSERT(out[1] == 8.0f, "vmovlps store out[1]=%f", out[1]);
 }
 
+static void test_scalar_merge_and_upper_zeroing(void) {
+    xmm_t src1 = { .u64 = {UINT64_C(0x1111111122222222), UINT64_C(0x3333333344444444)} };
+    xmm_t src2 = { .u64 = {UINT64_C(0x7ff8123456789abc), UINT64_C(0xaaaaaaaaaaaaaaaa)} };
+    ymm_t result;
+
+    __asm__ volatile (
+        "vmovdqu %1, %%xmm0\n\t" "vmovdqu %2, %%xmm1\n\t"
+        "vmovsd %%xmm1, %%xmm0, %%xmm2\n\t" "vmovdqu %%ymm2, %0"
+        : "=m"(result) : "m"(src1), "m"(src2) : "xmm0", "xmm1", "xmm2");
+    TEST_ASSERT(result.u64[0] == src2.u64[0], "vmovsd reg-reg low qword comes from scalar source");
+    TEST_ASSERT(result.u64[1] == src1.u64[1], "vmovsd reg-reg upper xmm qword comes from merge source");
+    TEST_ASSERT(result.u64[2] == 0 && result.u64[3] == 0, "vmovsd VEX.128 zeroes upper ymm");
+
+    src1.u32[0] = UINT32_C(0x11111111);
+    src1.u32[1] = UINT32_C(0x22222222);
+    src1.u32[2] = UINT32_C(0x33333333);
+    src1.u32[3] = UINT32_C(0x44444444);
+    src2.u32[0] = UINT32_C(0x7fc12345);
+    __asm__ volatile (
+        "vmovdqu %1, %%xmm0\n\t" "vmovdqu %2, %%xmm1\n\t"
+        "vmovss %%xmm1, %%xmm0, %%xmm2\n\t" "vmovdqu %%ymm2, %0"
+        : "=m"(result) : "m"(src1), "m"(src2) : "xmm0", "xmm1", "xmm2");
+    TEST_ASSERT(result.u32[0] == src2.u32[0], "vmovss reg-reg preserves NaN payload bits");
+    for (int i = 1; i < 4; i++)
+        TEST_ASSERT(result.u32[i] == src1.u32[i], "vmovss merge-source lane %d", i);
+    for (int i = 4; i < 8; i++)
+        TEST_ASSERT(result.u32[i] == 0, "vmovss VEX.128 zeroes upper ymm lane %d", i);
+
+    uint32_t scalar = UINT32_C(0x80000000);
+    __asm__ volatile (
+        "vmovss %1, %%xmm0\n\t" "vmovdqu %%ymm0, %0"
+        : "=m"(result) : "m"(scalar) : "xmm0");
+    TEST_ASSERT(result.u32[0] == scalar, "vmovss memory load preserves -0 bit pattern");
+    for (int i = 1; i < 8; i++) TEST_ASSERT(result.u32[i] == 0, "vmovss memory load zero lane %d", i);
+}
+
 int main(void) {
     if (!check_avx()) { printf("AVX not supported\n"); return 1; }
     test_vmovsd();
@@ -161,5 +201,6 @@ int main(void) {
     test_vmovhps();
     test_vmovlpd();
     test_vmovlps();
+    test_scalar_merge_and_upper_zeroing();
     TEST_END();
 }

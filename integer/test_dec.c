@@ -117,11 +117,38 @@ static void test_dec_sizes(void) {
     TEST_ASSERT(r32 == 99, "decl 100 expected 99");
 }
 
+static void test_dec_memory_width_overflow_flags(void) {
+    uint8_t m8 = UINT8_C(0x80);
+    uint16_t m16 = UINT16_C(0x8000);
+    uint32_t m32 = UINT32_C(0x80000000);
+    uint64_t m64 = UINT64_C(0x8000000000000000);
+    uint64_t flags;
+
+    __asm__ volatile ("decb %0" : "+m"(m8) : : "cc");
+    __asm__ volatile ("decw %0" : "+m"(m16) : : "cc");
+    __asm__ volatile ("decl %0" : "+m"(m32) : : "cc");
+    __asm__ volatile (
+        "clc\n\tdecq %0\n\tpushfq\n\tpopq %1"
+        : "+m"(m64), "=r"(flags) : : "cc"
+    );
+    TEST_ASSERT(m8 == UINT8_C(0x7f), "decb memory INT8_MIN overflow");
+    TEST_ASSERT(m16 == UINT16_C(0x7fff), "decw memory INT16_MIN overflow");
+    TEST_ASSERT(m32 == UINT32_C(0x7fffffff), "decl memory INT32_MIN overflow");
+    TEST_ASSERT(m64 == UINT64_C(0x7fffffffffffffff), "decq memory INT64_MIN overflow");
+    TEST_ASSERT(flags & OF_FLAG, "decq memory signed overflow sets OF");
+    TEST_ASSERT(!(flags & SF_FLAG), "decq memory overflow result clears SF");
+    TEST_ASSERT(!(flags & ZF_FLAG), "decq memory overflow result clears ZF");
+    TEST_ASSERT(flags & PF_FLAG, "decq memory overflow low byte 0xff sets PF");
+    TEST_ASSERT(flags & AF_FLAG, "decq INT64_MIN borrow across bit 3 sets AF");
+    TEST_ASSERT(!(flags & CF_FLAG), "decq memory preserves clear CF");
+}
+
 int main(void) {
     TEST_START("DEC instruction");
     test_dec_basic();
     test_dec_overflow();
     test_dec_cf_preserved();
     test_dec_sizes();
+    test_dec_memory_width_overflow_flags();
     TEST_END();
 }

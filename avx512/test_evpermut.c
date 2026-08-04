@@ -24,16 +24,24 @@ typedef union {
     double f64[8];
 } zmm_t __attribute__((aligned(64)));
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx512(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile ("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
     return (ebx >> 16) & 1;
 }
+#else
+#define check_avx512() 1
+#endif
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx512vbmi(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile ("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
     return (ecx >> 1) & 1;
 }
+#else
+#define check_avx512vbmi() 1
+#endif
 
 int main(void) {
     if (!check_avx512()) {
@@ -110,6 +118,23 @@ int main(void) {
             TEST_ASSERT(dst.u8[i] == src.u8[(i + 3) % 64],
                 "EVPERMUTB rotate lane %d: %u", i, dst.u8[i]);
     }
+
+    /* Complement the reverse/identity cases with wrapped indices and mask extremes. */
+    for (int i = 0; i < 16; i++) { src.u32[i] = 0x5000u + (uint32_t)i; idx.u32[i] = UINT32_MAX - (uint32_t)i; }
+    __asm__ volatile ("vmovdqu32 %1,%%zmm0\n\tvmovdqu32 %2,%%zmm1\n\tvpermd %%zmm0,%%zmm1,%%zmm2\n\tvmovdqu32 %%zmm2,%0"
+        : "=m"(dst) : "m"(src), "m"(idx) : "zmm0", "zmm1", "zmm2");
+    for (int i = 0; i < 16; i++) TEST_ASSERT(dst.u32[i] == src.u32[idx.u32[i] & 15], "EVPERMUTD high-index wrap lane %d", i);
+
+    for (int i = 0; i < 8; i++) { src.u64[i] = 0x6000u + (uint64_t)i; idx.u64[i] = UINT64_MAX - (uint64_t)i; dst.u64[i] = 0xdeadbeefdeadbeefULL; }
+    zmm_t initial = dst;
+    uint64_t kmask = 0;
+    __asm__ volatile ("kmovq %4,%%k1\n\tvmovdqu64 %1,%%zmm0\n\tvmovdqu64 %2,%%zmm1\n\tvmovdqu64 %3,%%zmm2\n\tvpermq %%zmm0,%%zmm1,%%zmm2%{%%k1%}\n\tvmovdqu64 %%zmm2,%0"
+        : "=m"(dst) : "m"(src), "m"(idx), "m"(initial), "r"(kmask) : "zmm0", "zmm1", "zmm2", "k1");
+    for (int i = 0; i < 8; i++) TEST_ASSERT(dst.u64[i] == initial.u64[i], "EVPERMUTQ k=0 merge lane %d", i);
+    kmask = 0xff;
+    __asm__ volatile ("kmovq %3,%%k1\n\tvmovdqu64 %1,%%zmm0\n\tvmovdqu64 %2,%%zmm1\n\tvpermq %%zmm0,%%zmm1,%%zmm2%{%%k1%}%{z%}\n\tvmovdqu64 %%zmm2,%0"
+        : "=m"(dst) : "m"(src), "m"(idx), "r"(kmask) : "zmm0", "zmm1", "zmm2", "k1");
+    for (int i = 0; i < 8; i++) TEST_ASSERT(dst.u64[i] == src.u64[idx.u64[i] & 7], "EVPERMUTQ full mask lane %d", i);
 
     TEST_END();
 }

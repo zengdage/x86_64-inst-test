@@ -245,11 +245,52 @@ static void test_rsqrtss(void) {
                 "rsqrtss(0.25) ~ 2.0: got %f", result.f32[0]);
 }
 
+static void test_sqrtss_exact_snan_and_upper_lanes(void) {
+    xmm_t dst = { .u32 = {
+        UINT32_C(0xdeadbeef), UINT32_C(0x80000000),
+        UINT32_C(0x7fc54321), UINT32_C(0x00000001)
+    } };
+    xmm_t src = { .u32 = {
+        UINT32_C(0x7f812345), UINT32_C(0x11111111),
+        UINT32_C(0x22222222), UINT32_C(0x33333333)
+    } };
+    xmm_t expected = dst, result;
+    expected.u32[0] = UINT32_C(0x7fc12345);
+    uint32_t old_mxcsr, clean_mxcsr, after_mxcsr;
+
+    __asm__ volatile ("stmxcsr %0" : "=m"(old_mxcsr));
+    clean_mxcsr = old_mxcsr & ~UINT32_C(0x3f);
+    __asm__ volatile ("ldmxcsr %0" : : "m"(clean_mxcsr));
+    __asm__ volatile (
+        "movdqa %1, %%xmm0\n\t"
+        "sqrtss %2, %%xmm0\n\t"
+        "movdqa %%xmm0, %0"
+        : "=m"(result) : "m"(dst), "m"(src) : "xmm0"
+    );
+    __asm__ volatile ("stmxcsr %0" : "=m"(after_mxcsr));
+    __asm__ volatile ("ldmxcsr %0" : : "m"(old_mxcsr));
+    TEST_ASSERT(memcmp(&result, &expected, sizeof(expected)) == 0,
+                "SQRTSS quiets SNaN and preserves exact destination upper lanes");
+    TEST_ASSERT(after_mxcsr & 1, "SQRTSS SNaN sets MXCSR invalid flag");
+
+    src.u32[0] = UINT32_C(0x80000000);
+    __asm__ volatile (
+        "movdqa %1, %%xmm0\n\t"
+        "sqrtss %2, %%xmm0\n\t"
+        "movdqa %%xmm0, %0"
+        : "=m"(result) : "m"(dst), "m"(src) : "xmm0"
+    );
+    TEST_ASSERT(result.u32[0] == UINT32_C(0x80000000), "SQRTSS preserves -0 sign");
+    TEST_ASSERT(memcmp(&result.u32[1], &dst.u32[1], 3 * sizeof(uint32_t)) == 0,
+                "SQRTSS -0 case preserves all upper lanes");
+}
+
 int main(void) {
     TEST_START("SQRTSS/RCPSS/RSQRTSS instructions");
     test_sqrtss_basic();
     test_sqrtss_mem();
     test_rcpss();
     test_rsqrtss();
+    test_sqrtss_exact_snan_and_upper_lanes();
     TEST_END();
 }

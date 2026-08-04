@@ -102,6 +102,50 @@ static void test_bextr_high_bits(void) {
     TEST_ASSERT(result == 0xF, "bextrq bits[60:63]: expected 0xF, got 0x%lx", result);
 }
 
+static void test_bextr_boundaries(void) {
+    uint64_t result;
+    uint64_t flags;
+
+    /* A field that starts at the operand width is empty. */
+    __asm__ volatile (
+        "movq $-1, %%rax\n\t"
+        "movq $0x0140, %%rbx\n\t"    /* start=64, len=1 */
+        "bextrq %%rbx, %%rax, %%rcx\n\t"
+        "movq %%rcx, %0\n\t"
+        "pushfq\n\t"
+        "popq %1"
+        : "=r"(result), "=r"(flags)
+        :
+        : "rax", "rbx", "rcx", "cc"
+    );
+    TEST_ASSERT(result == 0, "bextrq start=64: expected empty result");
+    TEST_ASSERT(flags & ZF_FLAG, "bextrq start=64: ZF should be set");
+
+    /* Length is clipped at the end of the source operand. */
+    __asm__ volatile (
+        "movq $-1, %%rax\n\t"
+        "movq $0x083f, %%rbx\n\t"    /* start=63, len=8 */
+        "bextrq %%rbx, %%rax, %%rcx\n\t"
+        "movq %%rcx, %0"
+        : "=r"(result)
+        :
+        : "rax", "rbx", "rcx", "cc"
+    );
+    TEST_ASSERT(result == 1, "bextrq start=63 len=8: only bit 63 remains");
+
+    /* The same width boundary applies to the 32-bit form. */
+    __asm__ volatile (
+        "movl $-1, %%eax\n\t"
+        "movl $0x0120, %%ebx\n\t"    /* start=32, len=1 */
+        "bextrl %%ebx, %%eax, %%ecx\n\t"
+        "movl %%ecx, %k0"
+        : "=r"(result)
+        :
+        : "rax", "rbx", "rcx", "cc"
+    );
+    TEST_ASSERT((uint32_t)result == 0, "bextrl start=32: expected empty result");
+}
+
 int main(void) {
     TEST_START("BEXTR instruction (BMI1)");
     test_bextr_basic();
@@ -109,5 +153,6 @@ int main(void) {
     test_bextr_zero_len();
     test_bextr_32bit();
     test_bextr_high_bits();
+    test_bextr_boundaries();
     TEST_END();
 }

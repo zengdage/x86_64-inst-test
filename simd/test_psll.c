@@ -99,6 +99,57 @@ static void test_psllw_zero_shift(void) {
     TEST_ASSERT(dst.u16[0] == 0x1234, "psllw shift 0: unchanged, got 0x%04x", dst.u16[0]);
 }
 
+static void test_psll_boundaries(void) {
+    xmm_t a = { .u64 = {UINT64_C(1), UINT64_MAX} };
+    xmm_t dst;
+    xmm_t count;
+
+    __asm__ volatile (
+        "movdqa %1, %%xmm0\n\t"
+        "pslld $31, %%xmm0\n\t"
+        "movdqa %%xmm0, %0"
+        : "=m"(dst) : "m"(a) : "xmm0"
+    );
+    TEST_ASSERT(dst.u32[0] == UINT32_C(0x80000000), "pslld last valid count 31");
+
+    __asm__ volatile (
+        "movdqa %1, %%xmm0\n\t"
+        "pslld $32, %%xmm0\n\t"
+        "movdqa %%xmm0, %0"
+        : "=m"(dst) : "m"(a) : "xmm0"
+    );
+    TEST_ASSERT(dst.u64[0] == 0 && dst.u64[1] == 0, "pslld count 32 zeroes all lanes");
+
+    __asm__ volatile (
+        "movdqa %1, %%xmm0\n\t"
+        "psllq $63, %%xmm0\n\t"
+        "movdqa %%xmm0, %0"
+        : "=m"(dst) : "m"(a) : "xmm0"
+    );
+    TEST_ASSERT(dst.u64[0] == UINT64_C(0x8000000000000000),
+                "psllq last valid count 63");
+
+    __asm__ volatile (
+        "movdqa %1, %%xmm0\n\t"
+        "psllq $0xff, %%xmm0\n\t"
+        "movdqa %%xmm0, %0"
+        : "=m"(dst) : "m"(a) : "xmm0"
+    );
+    TEST_ASSERT(dst.u64[0] == 0 && dst.u64[1] == 0, "psllq max imm8 zeroes all lanes");
+
+    /* Only the low qword of a vector count operand is consumed. */
+    count.u64[0] = 1;
+    count.u64[1] = UINT64_MAX;
+    __asm__ volatile (
+        "movdqa %1, %%xmm0\n\t"
+        "psllq %2, %%xmm0\n\t"
+        "movdqa %%xmm0, %0"
+        : "=m"(dst) : "m"(a), "m"(count) : "xmm0"
+    );
+    TEST_ASSERT(dst.u64[0] == 2 && dst.u64[1] == UINT64_MAX - 1,
+                "psllq vector count ignores upper qword");
+}
+
 int main(void) {
     TEST_START("PSLLW/PSLLD/PSLLQ instructions");
     test_psllw_imm();
@@ -107,5 +158,6 @@ int main(void) {
     test_psllq_imm();
     test_psllq_xmm_count();
     test_psllw_zero_shift();
+    test_psll_boundaries();
     TEST_END();
 }

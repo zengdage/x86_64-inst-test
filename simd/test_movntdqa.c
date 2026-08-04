@@ -9,6 +9,17 @@
  * Note: Do not use static linking.
  */
 #include "../common.h"
+#include <setjmp.h>
+#include <signal.h>
+
+static sigjmp_buf movntdqa_fault_env;
+static volatile sig_atomic_t got_movntdqa_fault;
+
+static void movntdqa_fault_handler(int sig) {
+    (void)sig;
+    got_movntdqa_fault = 1;
+    siglongjmp(movntdqa_fault_env, 1);
+}
 
 static void test_movntdqa_basic(void) {
     xmm_t mem __attribute__((aligned(16))) = {
@@ -72,11 +83,37 @@ static void test_movntdqa_doubles(void) {
     TEST_ASSERT(r.f64[1] == 2.71828, "movntdqa f64 [1]: got %f", r.f64[1]);
 }
 
+static void test_movntdqa_alignment_fault(void) {
+    unsigned char storage[48] __attribute__((aligned(16))) = {0};
+    volatile xmm_t *misaligned = (volatile xmm_t *)(void *)(storage + 1);
+    struct sigaction sa, old_segv, old_bus;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = movntdqa_fault_handler;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGSEGV, &sa, &old_segv);
+    sigaction(SIGBUS, &sa, &old_bus);
+
+    got_movntdqa_fault = 0;
+    if (sigsetjmp(movntdqa_fault_env, 1) == 0) {
+        xmm_t result;
+        __asm__ volatile (
+            "movntdqa %1, %%xmm0\n\t"
+            "movdqu %%xmm0, %0"
+            : "=m"(result) : "m"(*misaligned) : "xmm0", "memory");
+    }
+    TEST_ASSERT(got_movntdqa_fault,
+                "movntdqa misaligned 128-bit memory operand raises #GP");
+
+    sigaction(SIGSEGV, &old_segv, NULL);
+    sigaction(SIGBUS, &old_bus, NULL);
+}
+
 int main(void) {
     TEST_START("MOVNTDQA");
     test_movntdqa_basic();
     test_movntdqa_bytes();
     test_movntdqa_floats();
     test_movntdqa_doubles();
+    test_movntdqa_alignment_fault();
     TEST_END();
 }

@@ -1,6 +1,7 @@
 #include "../common.h"
 #include <immintrin.h>
 #include <math.h>
+#include <float.h>
 
 int main(void) {
     TEST_START("VSCALEFPD/VSCALEFPS/VSCALEFSD/VSCALEFSS AVX-512");
@@ -110,6 +111,38 @@ int main(void) {
             "vmovaps %%xmm2, %0"
             : "=m"(r) : "m"(a), "m"(b) : "xmm0","xmm1","xmm2");
         TEST_ASSERT(r.f32[0] == 42.0f, "vscalefss scale=0: %g", r.f32[0]);
+    }
+
+    /* Boundary and IEEE-754 special values. */
+    {
+        xmm_t a = { .f32 = {1.0f, -0.0f, INFINITY, NAN} };
+        xmm_t b = { .f32 = {127.0f, -149.0f, -INFINITY, 0.0f} };
+        xmm_t r;
+        __asm__ volatile(
+            "vmovaps %1, %%xmm0\n\t"
+            "vmovaps %2, %%xmm1\n\t"
+            "vscalefps %%xmm1, %%xmm0, %%xmm2\n\t"
+            "vmovaps %%xmm2, %0"
+            : "=m"(r) : "m"(a), "m"(b) : "xmm0", "xmm1", "xmm2");
+        TEST_ASSERT(r.f32[0] == 0x1p127f, "vscalefps largest power-of-two finite boundary");
+        TEST_ASSERT(r.f32[1] == 0.0f && signbit(r.f32[1]),
+                    "vscalefps negative zero preserves sign");
+        TEST_ASSERT(isnan(r.f32[2]), "vscalefps +inf scaled by -inf is NaN");
+        TEST_ASSERT(isnan(r.f32[3]), "vscalefps NaN propagates");
+    }
+
+    {
+        xmm_t a = { .f32 = {FLT_MAX, 0.0f, 0.0f, 0.0f} };
+        xmm_t b = { .f32 = {1.0f, 0.0f, 0.0f, 0.0f} };
+        xmm_t r;
+        __asm__ volatile(
+            "vmovaps %1, %%xmm0\n\t"
+            "vmovaps %2, %%xmm1\n\t"
+            "vscalefss %%xmm1, %%xmm0, %%xmm2\n\t"
+            "vmovaps %%xmm2, %0"
+            : "=m"(r) : "m"(a), "m"(b) : "xmm0", "xmm1", "xmm2");
+        TEST_ASSERT(isinf(r.f32[0]) && r.f32[0] > 0.0f,
+                    "vscalefss FLT_MAX scaled up overflows to +inf");
     }
 
     TEST_END();

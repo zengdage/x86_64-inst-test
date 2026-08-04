@@ -117,6 +117,41 @@ static void test_psraw_zero_shift(void) {
     TEST_ASSERT(dst.i16[1] == 5678, "psraw shift 0 unchanged: got %d", dst.i16[1]);
 }
 
+static void test_psra_boundaries(void) {
+    xmm_t a = { .i32 = {INT32_MIN, INT32_MAX, -1, 0} };
+    xmm_t dst;
+    xmm_t count = { .u64 = {1, UINT64_MAX} };
+
+    __asm__ volatile (
+        "movdqa %1, %%xmm0\n\t"
+        "psrad $31, %%xmm0\n\t"
+        "movdqa %%xmm0, %0"
+        : "=m"(dst) : "m"(a) : "xmm0"
+    );
+    TEST_ASSERT(dst.i32[0] == -1 && dst.i32[1] == 0 &&
+                dst.i32[2] == -1 && dst.i32[3] == 0,
+                "psrad last valid count 31 saturates to sign");
+
+    __asm__ volatile (
+        "movdqa %1, %%xmm0\n\t"
+        "psrad $0xff, %%xmm0\n\t"
+        "movdqa %%xmm0, %0"
+        : "=m"(dst) : "m"(a) : "xmm0"
+    );
+    TEST_ASSERT(dst.i32[0] == -1 && dst.i32[1] == 0 &&
+                dst.i32[2] == -1 && dst.i32[3] == 0,
+                "psrad max imm8 saturates to sign");
+
+    __asm__ volatile (
+        "movdqa %1, %%xmm0\n\t"
+        "psrad %2, %%xmm0\n\t"
+        "movdqa %%xmm0, %0"
+        : "=m"(dst) : "m"(a), "m"(count) : "xmm0"
+    );
+    TEST_ASSERT(dst.i32[0] == INT32_MIN / 2 && dst.i32[1] == INT32_MAX / 2,
+                "psrad vector count ignores upper qword");
+}
+
 int main(void) {
     TEST_START("PSRAW/PSRAD instructions");
     test_psraw_positive();
@@ -126,5 +161,6 @@ int main(void) {
     test_psrad_negative();
     test_psrad_xmm_count();
     test_psraw_zero_shift();
+    test_psra_boundaries();
     TEST_END();
 }

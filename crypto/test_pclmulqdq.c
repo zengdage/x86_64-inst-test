@@ -21,6 +21,7 @@
  * Note: Do not use static linking.
  */
 #include "../common.h"
+#include "clmul_ref.h"
 
 /* Test PCLMULQDQ with zero */
 static void test_pclmulqdq_zero(void) {
@@ -156,11 +157,15 @@ static void test_pclmulqdq_selectors(void) {
         : "xmm0", "xmm1", "xmm2", "xmm3", "xmm4"
     );
 
-    /* All four selectors should give different results */
-    TEST_ASSERT(memcmp(&r00, &r01, 16) != 0, "pclmulqdq: 0x00 != 0x01");
-    TEST_ASSERT(memcmp(&r00, &r10, 16) != 0, "pclmulqdq: 0x00 != 0x10");
-    TEST_ASSERT(memcmp(&r00, &r11, 16) != 0, "pclmulqdq: 0x00 != 0x11");
-    TEST_ASSERT(memcmp(&r01, &r11, 16) != 0, "pclmulqdq: 0x01 != 0x11");
+    xmm_t results[] = {r00, r01, r10, r11};
+    const unsigned ai[] = {0, 1, 0, 1};
+    const unsigned bi[] = {0, 0, 1, 1};
+    for (int i = 0; i < 4; i++) {
+        uint64_t low, high;
+        clmul64_reference(a.u64[ai[i]], b.u64[bi[i]], &low, &high);
+        TEST_ASSERT(results[i].u64[0] == low && results[i].u64[1] == high,
+                    "pclmulqdq selector %d matches scalar reference", i);
+    }
 }
 
 /* Test PCLMULQDQ xmm, mem */
@@ -190,6 +195,10 @@ static void test_pclmulqdq_mem(void) {
 
     TEST_ASSERT(memcmp(&result_reg, &result_mem, 16) == 0,
                 "pclmulqdq: reg-reg and reg-mem produce same result");
+    uint64_t low, high;
+    clmul64_reference(a.u64[0], b.u64[0], &low, &high);
+    TEST_ASSERT(result_mem.u64[0] == low && result_mem.u64[1] == high,
+                "pclmulqdq memory source matches scalar reference");
 }
 
 /* Test x * x gives known pattern for carry-less multiply */
@@ -214,6 +223,28 @@ static void test_pclmulqdq_self_multiply(void) {
                 result.u64[0]);
 }
 
+static void test_pclmulqdq_high_immediate_bits(void) {
+    xmm_t a = { .u64 = {UINT64_C(0x0123456789abcdef), UINT64_C(0xfedcba9876543210)} };
+    xmm_t b = { .u64 = {UINT64_C(0x1111111111111111), UINT64_C(0x2222222222222222)} };
+    xmm_t r11, rff;
+
+    /* Only imm8 bits 0 and 4 select operands; all other bits are ignored. */
+    __asm__ volatile (
+        "movdqu %2, %%xmm0\n\t"
+        "movdqu %3, %%xmm1\n\t"
+        "movdqa %%xmm0, %%xmm2\n\t"
+        "pclmulqdq $0x11, %%xmm1, %%xmm0\n\t"
+        "pclmulqdq $0xff, %%xmm1, %%xmm2\n\t"
+        "movdqu %%xmm0, %0\n\t"
+        "movdqu %%xmm2, %1"
+        : "=m"(r11), "=m"(rff)
+        : "m"(a), "m"(b)
+        : "xmm0", "xmm1", "xmm2"
+    );
+    TEST_ASSERT(memcmp(&r11, &rff, sizeof(r11)) == 0,
+                "pclmulqdq imm=0xff: reserved immediate bits ignored");
+}
+
 int main(void) {
     TEST_START("PCLMULQDQ instruction");
     test_pclmulqdq_zero();
@@ -223,5 +254,6 @@ int main(void) {
     test_pclmulqdq_selectors();
     test_pclmulqdq_mem();
     test_pclmulqdq_self_multiply();
+    test_pclmulqdq_high_immediate_bits();
     TEST_END();
 }

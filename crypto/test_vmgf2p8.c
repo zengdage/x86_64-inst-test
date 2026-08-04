@@ -1,12 +1,17 @@
 #include "../common.h"
 #include <immintrin.h>
+#include "gfni_ref.h"
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_gfni(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
                      : "a"(7), "c"(0));
     return (ecx >> 8) & 1; /* GFNI bit */
 }
+#else
+#define check_gfni() 1
+#endif
 
 int main(void) {
     TEST_START("VGF2P8MULB/VGF2P8AFFINEQB/VGF2P8AFFINEINVQB 256-bit VEX");
@@ -133,6 +138,29 @@ int main(void) {
         int ok = 1;
         for (int i = 0; i < 32; i++) if (r.u8[i] != 0x00) ok = 0;
         TEST_ASSERT(ok, "vgf2p8affineinvqb inv(0)=0");
+    }
+
+    /* Mixed inverse values and immediate boundary, checked without another GFNI instruction. */
+    {
+        ymm_t src, matrix, inverse, inverse_ff;
+        uint64_t identity = UINT64_C(0x0102040810204080);
+        static const uint8_t boundary[] = {0x00,0x01,0x02,0x03,0x53,0x80,0xfe,0xff};
+        for (int i = 0; i < 4; i++) matrix.u64[i] = identity;
+        for (int i = 0; i < 32; i++) src.u8[i] = boundary[i & 7];
+        __asm__ volatile(
+            "vmovdqu %2, %%ymm0\n\t" "vmovdqu %3, %%ymm1\n\t"
+            "vgf2p8affineinvqb $0, %%ymm1, %%ymm0, %%ymm2\n\t"
+            "vgf2p8affineinvqb $0xff, %%ymm1, %%ymm0, %%ymm3\n\t"
+            "vmovdqu %%ymm2, %0\n\t" "vmovdqu %%ymm3, %1"
+            : "=m"(inverse), "=m"(inverse_ff) : "m"(src), "m"(matrix)
+            : "ymm0","ymm1","ymm2","ymm3");
+        for (int i = 0; i < 32; i++) {
+            uint8_t expected = gfni_inverse_reference(src.u8[i]);
+            TEST_ASSERT(inverse.u8[i] == expected,
+                        "vgf2p8affineinvqb scalar inverse lane %d", i);
+            TEST_ASSERT(inverse_ff.u8[i] == (uint8_t)(expected ^ 0xffU),
+                        "vgf2p8affineinvqb imm=ff lane %d", i);
+        }
     }
 
     TEST_END();

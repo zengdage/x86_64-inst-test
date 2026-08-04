@@ -28,12 +28,21 @@ int main(void) {
     /* FWAIT/WAIT: synchronize FPU */
     {
         double val = 1.0;
+        uint16_t before, after;
         __asm__ volatile(
-            "fldl %0\n\t"
+            "fldl %2\n\t"
+            "fnstsw %0\n\t"
             "fwait\n\t"
+            "fnstsw %1\n\t"
             "fstp %%st(0)"
-            : : "m"(val));
-        TEST_ASSERT(1, "fwait: no fault");
+            : "=m"(before), "=m"(after) : "m"(val));
+        TEST_ASSERT(before == after, "fwait preserves x87 status: %#x vs %#x", before, after);
+
+        const unsigned char *encoding;
+        __asm__ volatile(
+            "jmp 1f\n\t" "0: fwait\n\t" "1: leaq 0b(%%rip), %0"
+            : "=r"(encoding));
+        TEST_ASSERT(encoding[0] == 0x9b, "fwait encoding is 0x9b, got %#x", encoding[0]);
     }
 
     /* FICOM: compare ST(0) with 16-bit integer memory */

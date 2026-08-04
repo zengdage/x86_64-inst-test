@@ -41,7 +41,10 @@ x86_64-inst-test/
 - **Architecture**: x86-64 (compilation host)
 - **CPU features needed at runtime**: SSE4.2, AVX2, FMA, AES-NI, SHA, AVX-512 (F/BW/DQ/VL/IFMA/VBMI), GFNI, VAES, VPCLMULQDQ, ADX, BMI1/BMI2
 
-Tests that require optional CPU features (e.g., AVX-512, SHA, GFNI) include CPUID checks and skip gracefully on unsupported hardware.
+Runtime CPUID guards are disabled by default, so instruction tests execute
+unconditionally. This is the preferred mode when testing a binary translator.
+The guards can be enabled for native execution on machines with mixed feature
+support.
 
 ## Build
 
@@ -52,6 +55,13 @@ make
 # Build with parallel jobs
 make -j$(nproc)
 
+# Enable runtime CPUID checks and skip unsupported optional instructions.
+# Use -B when switching modes so binaries are rebuilt with the new flags.
+make -B ENABLE_RUNTIME_CPU_CHECKS=1
+
+# Equivalent for a directly compiled test
+gcc -DENABLE_RUNTIME_CPU_CHECKS=1 ...
+
 # Clean all binaries
 make clean
 ```
@@ -61,8 +71,11 @@ make clean
 ### Native execution
 
 ```bash
-# Build and run all tests natively
+# Build and run all tests unconditionally
 make run
+
+# Native run with CPUID/SIGILL guards enabled
+make -B ENABLE_RUNTIME_CPU_CHECKS=1 run
 
 # Run a specific category
 make run-integer

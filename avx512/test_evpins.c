@@ -24,11 +24,15 @@ typedef union {
     double f64[8];
 } zmm_t __attribute__((aligned(64)));
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx512vl(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile ("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
     return ((ebx >> 16) & 1) && ((ebx >> 31) & 1); /* AVX512F + AVX512VL */
 }
+#else
+#define check_avx512vl() 1
+#endif
 
 int main(void) {
     if (!check_avx512vl()) {
@@ -114,6 +118,37 @@ int main(void) {
     );
     TEST_ASSERT(dst.u32[0] == 0, "VPINSRD insert-0 pos0: %08x", dst.u32[0]);
     TEST_ASSERT(dst.u32[1] == 0xFFFFFFFFU, "VPINSRD insert-0 pos1 unchanged: %08x", dst.u32[1]);
+
+    /* Immediate high bits are ignored; low bits select the final element. */
+    xmm_t original;
+    for (int i = 0; i < 16; i++) original.u8[i] = (uint8_t)i;
+    __asm__ volatile (
+        "vmovdqu %1, %%xmm0\n\t" "vpinsrb $0xff, %2, %%xmm0, %%xmm1\n\t" "vmovdqu %%xmm1, %0"
+        : "=m"(dst) : "m"(original), "r"((int)0xa5) : "xmm0","xmm1");
+    for (int i = 0; i < 16; i++)
+        TEST_ASSERT(dst.u8[i] == (i == 15 ? UINT8_C(0xa5) : original.u8[i]),
+                    "VPINSRB imm=ff lane %d", i);
+
+    __asm__ volatile (
+        "vmovdqu %1, %%xmm0\n\t" "vpinsrw $0xff, %2, %%xmm0, %%xmm1\n\t" "vmovdqu %%xmm1, %0"
+        : "=m"(dst) : "m"(original), "r"((int)0xbeef) : "xmm0","xmm1");
+    for (int i = 0; i < 8; i++)
+        TEST_ASSERT(dst.u16[i] == (i == 7 ? UINT16_C(0xbeef) : original.u16[i]),
+                    "VPINSRW imm=ff lane %d", i);
+
+    __asm__ volatile (
+        "vmovdqu %1, %%xmm0\n\t" "vpinsrd $0xff, %2, %%xmm0, %%xmm1\n\t" "vmovdqu %%xmm1, %0"
+        : "=m"(dst) : "m"(original), "r"((int)UINT32_C(0x89abcdef)) : "xmm0","xmm1");
+    for (int i = 0; i < 4; i++)
+        TEST_ASSERT(dst.u32[i] == (i == 3 ? UINT32_C(0x89abcdef) : original.u32[i]),
+                    "VPINSRD imm=ff lane %d", i);
+
+    qval = UINT64_C(0x0123456789abcdef);
+    __asm__ volatile (
+        "vmovdqu %1, %%xmm0\n\t" "vpinsrq $0xff, %2, %%xmm0, %%xmm1\n\t" "vmovdqu %%xmm1, %0"
+        : "=m"(dst) : "m"(original), "r"(qval) : "xmm0","xmm1");
+    TEST_ASSERT(dst.u64[0] == original.u64[0] && dst.u64[1] == qval,
+                "VPINSRQ imm=ff selects qword 1 and preserves qword 0");
 
     TEST_END();
 }

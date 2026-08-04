@@ -24,11 +24,15 @@ typedef union {
     double f64[8];
 } zmm_t __attribute__((aligned(64)));
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx512(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile ("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
     return ((ebx >> 16) & 1) && ((ebx >> 30) & 1);
 }
+#else
+#define check_avx512() 1
+#endif
 
 int main(void) {
     if (!check_avx512()) {
@@ -119,6 +123,38 @@ int main(void) {
     );
     for (int i = 0; i < 16; i++)
         TEST_ASSERT(dst.u32[i] == 0, "VPSUBD self-sub lane %d: %u", i, dst.u32[i]);
+
+    /* Underflow wraparound at every element width. */
+#define TEST_SUB_WRAP(FIELD, MOVE, INSN, LANES, MAXVAL) do { \
+        for (int i = 0; i < (LANES); i++) { a.FIELD[i] = 0; b.FIELD[i] = 1; } \
+        __asm__ volatile (MOVE " %1, %%zmm0\n\t" MOVE " %2, %%zmm1\n\t" \
+                          INSN " %%zmm1, %%zmm0, %%zmm2\n\t" MOVE " %%zmm2, %0" \
+                          : "=m"(dst) : "m"(a), "m"(b) : "zmm0","zmm1","zmm2"); \
+        for (int i = 0; i < (LANES); i++) \
+            TEST_ASSERT(dst.FIELD[i] == (MAXVAL), INSN " underflow lane %d", i); \
+    } while (0)
+    TEST_SUB_WRAP(u8,  "vmovdqu8",  "vpsubb", 64, UINT8_MAX);
+    TEST_SUB_WRAP(u16, "vmovdqu16", "vpsubw", 32, UINT16_MAX);
+    TEST_SUB_WRAP(u32, "vmovdqu32", "vpsubd", 16, UINT32_MAX);
+    TEST_SUB_WRAP(u64, "vmovdqu64", "vpsubq", 8, UINT64_MAX);
+#undef TEST_SUB_WRAP
+
+    for (int i = 0; i < 16; i++) { a.u32[i] = 30; b.u32[i] = 10; dst.u32[i] = UINT32_C(0xfeedface); }
+    kmask = 0;
+    __asm__ volatile (
+        "kmovq %3, %%k1\n\t" "vmovdqu32 %0, %%zmm2\n\t" "vmovdqu32 %1, %%zmm0\n\t"
+        "vmovdqu32 %2, %%zmm1\n\t" "vpsubd %%zmm1, %%zmm0, %%zmm2%{%%k1%}\n\t"
+        "vmovdqu32 %%zmm2, %0" : "+m"(dst) : "m"(a), "m"(b), "r"(kmask)
+        : "zmm0","zmm1","zmm2","k1");
+    for (int i = 0; i < 16; i++) TEST_ASSERT(dst.u32[i] == UINT32_C(0xfeedface), "VPSUBD k=0 merge lane %d", i);
+
+    kmask = UINT64_C(0x8001);
+    __asm__ volatile (
+        "kmovq %3, %%k1\n\t" "vmovdqu32 %1, %%zmm0\n\t" "vmovdqu32 %2, %%zmm1\n\t"
+        "vpsubd %%zmm1, %%zmm0, %%zmm2%{%%k1%}%{z%}\n\t" "vmovdqu32 %%zmm2, %0"
+        : "=m"(dst) : "m"(a), "m"(b), "r"(kmask) : "zmm0","zmm1","zmm2","k1");
+    for (int i = 0; i < 16; i++)
+        TEST_ASSERT(dst.u32[i] == ((i == 0 || i == 15) ? 20U : 0U), "VPSUBD endpoint zero mask lane %d", i);
 
     TEST_END();
 }

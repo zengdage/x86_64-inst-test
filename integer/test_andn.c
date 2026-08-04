@@ -99,6 +99,48 @@ static void test_andn_sf(void) {
     TEST_ASSERT(flags & SF_FLAG, "andnq: SF should be set when MSB is set");
 }
 
+static void test_andn_aliasing_zero_extension_and_flags(void) {
+    uint64_t result, flags;
+
+    /* The destination may overlap a source; a 32-bit destination must clear RAX[63:32]. */
+    __asm__ volatile (
+        "movq $-1, %%rax\n\t"
+        "movl $0x0f0f0f0f, %%eax\n\t"
+        "movl $0xff00ff00, %%ebx\n\t"
+        "andnl %%ebx, %%eax, %%eax\n\t"
+        "movq %%rax, %0\n\t"
+        "pushfq\n\t"
+        "popq %1"
+        : "=r"(result), "=r"(flags)
+        :
+        : "rax", "rbx", "cc"
+    );
+    TEST_ASSERT(result == UINT64_C(0x00000000f000f000),
+                "andnl overlapping destination and zero extension: %#" PRIx64, result);
+    TEST_ASSERT(!(flags & ZF_FLAG), "andnl nonzero result: ZF should be clear");
+    TEST_ASSERT(flags & SF_FLAG, "andnl bit31 set: SF should be set");
+    TEST_ASSERT(!(flags & CF_FLAG), "andnl overlapping destination: CF should be clear");
+    TEST_ASSERT(!(flags & OF_FLAG), "andnl overlapping destination: OF should be clear");
+
+    /* A zero result defines ZF=1 and SF=0 while CF/OF remain cleared. */
+    __asm__ volatile (
+        "movq $-1, %%rax\n\t"
+        "movq $-1, %%rbx\n\t"
+        "andnq %%rbx, %%rax, %%rax\n\t"
+        "movq %%rax, %0\n\t"
+        "pushfq\n\t"
+        "popq %1"
+        : "=r"(result), "=r"(flags)
+        :
+        : "rax", "rbx", "cc"
+    );
+    TEST_ASSERT(result == 0, "andnq overlapping zero result");
+    TEST_ASSERT(flags & ZF_FLAG, "andnq zero result: ZF should be set");
+    TEST_ASSERT(!(flags & SF_FLAG), "andnq zero result: SF should be clear");
+    TEST_ASSERT(!(flags & CF_FLAG), "andnq zero result: CF should be clear");
+    TEST_ASSERT(!(flags & OF_FLAG), "andnq zero result: OF should be clear");
+}
+
 int main(void) {
     TEST_START("ANDN instruction (BMI1)");
     test_andn_basic();
@@ -106,5 +148,6 @@ int main(void) {
     test_andn_zero();
     test_andn_32bit();
     test_andn_sf();
+    test_andn_aliasing_zero_extension_and_flags();
     TEST_END();
 }

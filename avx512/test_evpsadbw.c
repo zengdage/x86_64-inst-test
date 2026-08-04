@@ -24,11 +24,15 @@ typedef union {
     double f64[8];
 } zmm_t __attribute__((aligned(64)));
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx512bw(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile ("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
     return ((ebx >> 16) & 1) && ((ebx >> 30) & 1);
 }
+#else
+#define check_avx512bw() 1
+#endif
 
 int main(void) {
     if (!check_avx512bw()) {
@@ -113,6 +117,68 @@ int main(void) {
         TEST_ASSERT(dst.u64[i] == dst2.u64[i],
             "VPSADBW symmetry group %d: %llu != %llu", i,
             (unsigned long long)dst.u64[i], (unsigned long long)dst2.u64[i]);
+
+    /* Irregular data checks every 8-byte group against an independent oracle. */
+    for (int i = 0; i < 64; i++) {
+        a.u8[i] = (uint8_t)(i * 37 + 11);
+        b.u8[i] = (uint8_t)(255 - i * 19);
+    }
+    uint64_t expected[8];
+    for (int group = 0; group < 8; group++) {
+        expected[group] = 0;
+        for (int i = 0; i < 8; i++) {
+            int diff = (int)a.u8[group * 8 + i] - (int)b.u8[group * 8 + i];
+            expected[group] += (uint64_t)(diff < 0 ? -diff : diff);
+        }
+    }
+    __asm__ volatile (
+        "vmovdqu8 %1, %%zmm0\n\t"
+        "vpsadbw %2, %%zmm0, %%zmm2\n\t"
+        "vmovdqu64 %%zmm2, %0"
+        : "=m"(dst) : "m"(a), "m"(b) : "zmm0", "zmm2"
+    );
+    for (int group = 0; group < 8; group++)
+        TEST_ASSERT(dst.u64[group] == expected[group],
+                    "VPSADBW zmm memory source group %d: %llu != %llu", group,
+                    (unsigned long long)dst.u64[group],
+                    (unsigned long long)expected[group]);
+
+    /* VEX.256 computes four groups; VEX.128 computes two and clears YMM[255:128]. */
+    ymm_t result256;
+    __asm__ volatile (
+        "vmovdqu %1, %%ymm0\n\t"
+        "vpsadbw %2, %%ymm0, %%ymm2\n\t"
+        "vmovdqu %%ymm2, %0"
+        : "=m"(result256) : "m"(a), "m"(b) : "ymm0", "ymm2"
+    );
+    for (int group = 0; group < 4; group++)
+        TEST_ASSERT(result256.u64[group] == expected[group],
+                    "VPSADBW ymm group %d: %llu != %llu", group,
+                    (unsigned long long)result256.u64[group],
+                    (unsigned long long)expected[group]);
+
+    ymm_t initial128, result128;
+    memset(&initial128, 0xa5, sizeof(initial128));
+    __asm__ volatile (
+        "vmovdqu %1, %%ymm2\n\t"
+        "vmovdqu %2, %%xmm0\n\t"
+        "vpsadbw %3, %%xmm0, %%xmm2\n\t"
+        "vmovdqu %%ymm2, %0"
+        : "=m"(result128) : "m"(initial128), "m"(a), "m"(b)
+        : "xmm0", "ymm2"
+    );
+    TEST_ASSERT(result128.u64[0] == expected[0],
+                "VPSADBW xmm low group: %llu != %llu",
+                (unsigned long long)result128.u64[0],
+                (unsigned long long)expected[0]);
+    TEST_ASSERT(result128.u64[1] == expected[1],
+                "VPSADBW xmm high group: %llu != %llu",
+                (unsigned long long)result128.u64[1],
+                (unsigned long long)expected[1]);
+    TEST_ASSERT(result128.u64[2] == 0 && result128.u64[3] == 0,
+                "VEX.128 VPSADBW clears upper YMM: %#llx %#llx",
+                (unsigned long long)result128.u64[2],
+                (unsigned long long)result128.u64[3]);
 
     TEST_END();
 }

@@ -103,6 +103,21 @@ static void test_ptest_both_zero(void) {
     TEST_ASSERT(flags & CF_FLAG, "ptest both zero: CF set");
 }
 
+static void test_ptest_clears_other_flags(void) {
+    xmm_t a = { .u64 = {UINT64_C(0x8000000000000001), 0} };
+    xmm_t b = { .u64 = {UINT64_C(0x8000000000000001), 0} };
+    uint64_t flags;
+    __asm__ volatile (
+        "movq $0x8d5, %%r11\n\t" "pushq %%r11\n\t" "popfq\n\t"
+        "movdqa %1, %%xmm0\n\t" "ptest %2, %%xmm0\n\t"
+        "pushfq\n\t" "popq %0"
+        : "=r"(flags) : "m"(a), "m"(b) : "xmm0", "r11", "cc");
+    TEST_ASSERT(!(flags & ZF_FLAG) && (flags & CF_FLAG),
+                "ptest reference case sets ZF=0,CF=1");
+    TEST_ASSERT((flags & (OF_FLAG | SF_FLAG | AF_FLAG | PF_FLAG)) == 0,
+                "ptest clears OF/SF/AF/PF");
+}
+
 int main(void) {
     TEST_START("PTEST instruction");
     test_ptest_all_zero();
@@ -110,5 +125,6 @@ int main(void) {
     test_ptest_partial();
     test_ptest_disjoint();
     test_ptest_both_zero();
+    test_ptest_clears_other_flags();
     TEST_END();
 }

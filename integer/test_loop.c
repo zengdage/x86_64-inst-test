@@ -48,6 +48,53 @@ static void test_loop_one(void) {
     TEST_ASSERT(result == 1, "loop with rcx=1: expected 1 iteration");
 }
 
+static void test_loop_zero_wrap(void) {
+    uint64_t rcx_after;
+    uint64_t took_branch;
+    __asm__ volatile (
+        "xorq %%rcx, %%rcx\n\t"
+        "loop 1f\n\t"
+        "movq $0, %0\n\t"
+        "jmp 2f\n\t"
+        "1: movq $1, %0\n\t"
+        "2: movq %%rcx, %1"
+        : "=&r"(took_branch), "=r"(rcx_after)
+        :
+        : "rcx", "cc");
+    TEST_ASSERT(took_branch == 1, "loop with rcx=0 decrements and takes branch");
+    TEST_ASSERT(rcx_after == UINT64_MAX, "loop with rcx=0 wraps to UINT64_MAX");
+}
+
+static void test_loop_flags_unchanged(void) {
+    uint64_t before, after;
+    __asm__ volatile (
+        "movq $0x8d5, %%r11\n\t" "pushq %%r11\n\t" "popfq\n\t"
+        "movq $1, %%rcx\n\t" "pushfq\n\t" "popq %0\n\t"
+        "loop 1f\n\t" "1: pushfq\n\t" "popq %1"
+        : "=&r"(before), "=&r"(after)
+        :
+        : "rcx", "r11", "cc");
+    uint64_t mask = CF_FLAG | PF_FLAG | AF_FLAG | ZF_FLAG | SF_FLAG | OF_FLAG;
+    TEST_ASSERT((before & mask) == (after & mask),
+                "loop preserves flags: before=%#" PRIx64 " after=%#" PRIx64,
+                before & mask, after & mask);
+}
+
+static void test_loope_loopne_flag_matrix(void) {
+    uint64_t branch;
+#define TEST_CONDITIONAL_LOOP(SETFLAGS, INSN, EXPECTED, NAME) do { \
+        __asm__ volatile ("movq $2, %%rcx\n\t" SETFLAGS "\n\t" INSN " 1f\n\t" \
+                          "movq $0, %0\n\t" "jmp 2f\n\t" "1: movq $1, %0\n\t" "2:" \
+                          : "=&r"(branch) : : "rax", "rcx", "cc"); \
+        TEST_ASSERT(branch == (EXPECTED), NAME); \
+    } while (0)
+    TEST_CONDITIONAL_LOOP("xorl %%eax, %%eax", "loope",  1, "loope branches with rcx=2,ZF=1");
+    TEST_CONDITIONAL_LOOP("movl $1, %%eax\n\ttestl %%eax, %%eax", "loope", 0, "loope stops with rcx=2,ZF=0");
+    TEST_CONDITIONAL_LOOP("xorl %%eax, %%eax", "loopne", 0, "loopne stops with rcx=2,ZF=1");
+    TEST_CONDITIONAL_LOOP("movl $1, %%eax\n\ttestl %%eax, %%eax", "loopne", 1, "loopne branches with rcx=2,ZF=0");
+#undef TEST_CONDITIONAL_LOOP
+}
+
 static void test_loope(void) {
     uint64_t result;
 
@@ -104,6 +151,9 @@ int main(void) {
     TEST_START("LOOP/LOOPE/LOOPNE instructions");
     test_loop_basic();
     test_loop_one();
+    test_loop_zero_wrap();
+    test_loop_flags_unchanged();
+    test_loope_loopne_flag_matrix();
     test_loope();
     test_loopne();
     TEST_END();

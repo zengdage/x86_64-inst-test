@@ -24,11 +24,15 @@ typedef union {
     double f64[8];
 } zmm_t __attribute__((aligned(64)));
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx512(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile ("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
     return ((ebx >> 16) & 1) && ((ebx >> 30) & 1);
 }
+#else
+#define check_avx512() 1
+#endif
 
 int main(void) {
     if (!check_avx512()) {
@@ -107,6 +111,29 @@ int main(void) {
             TEST_ASSERT(dst.u8[lane*16+j] == src.u8[lane*16 + (15-j)],
                 "VPSHUFB lane%d byte%d: %u != %u", lane, j,
                 dst.u8[lane*16+j], src.u8[lane*16+(15-j)]);
+
+    /* Control boundaries: bit 7 zeroes, bits 6:4 are ignored, low nibble is lane-local. */
+    for (int lane = 0; lane < 4; lane++) {
+        for (int j = 0; j < 16; j++) ctrl.u8[lane*16+j] = (uint8_t)j;
+        ctrl.u8[lane*16+0] = 0x80;
+        ctrl.u8[lane*16+1] = 0x8f;
+        ctrl.u8[lane*16+2] = 0x1f;
+        ctrl.u8[lane*16+3] = 0x70;
+        ctrl.u8[lane*16+4] = 0x10;
+    }
+    __asm__ volatile (
+        "vmovdqu8 %1, %%zmm0\n\t" "vmovdqu8 %2, %%zmm1\n\t"
+        "vpshufb %%zmm1, %%zmm0, %%zmm2\n\t" "vmovdqu8 %%zmm2, %0"
+        : "=m"(dst) : "m"(src), "m"(ctrl) : "zmm0","zmm1","zmm2");
+    for (int lane = 0; lane < 4; lane++) {
+        int base = lane * 16;
+        TEST_ASSERT(dst.u8[base] == 0 && dst.u8[base+1] == 0,
+                    "VPSHUFB high-bit zero lane %d", lane);
+        TEST_ASSERT(dst.u8[base+2] == src.u8[base+15],
+                    "VPSHUFB bit4 ignored lane %d index15", lane);
+        TEST_ASSERT(dst.u8[base+3] == src.u8[base] && dst.u8[base+4] == src.u8[base],
+                    "VPSHUFB bits6:4 ignored lane %d index0", lane);
+    }
 
     TEST_END();
 }

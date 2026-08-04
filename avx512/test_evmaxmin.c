@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <math.h>
 #include "../common.h"
 
 typedef union {
@@ -24,11 +25,15 @@ typedef union {
     double f64[8];
 } zmm_t __attribute__((aligned(64)));
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx512(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile ("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
     return (ebx >> 16) & 1;
 }
+#else
+#define check_avx512() 1
+#endif
 
 int main(void) {
     if (!check_avx512()) {
@@ -108,6 +113,34 @@ int main(void) {
         float expected = (kmask >> i) & 1 ? (a.f32[i] > b.f32[i] ? a.f32[i] : b.f32[i]) : 0.0f;
         TEST_ASSERT(dst.f32[i] == expected, "VMAXPS zero mask lane %d: %f != %f", i, dst.f32[i], expected);
     }
+
+    /* NaN and signed-zero ties return the second source operand. */
+    for (int i = 0; i < 16; i++) { a.f32[i] = (float)i; b.f32[i] = (float)(i + 1); }
+    a.f32[0] = NAN;  b.f32[0] = 1.0f;
+    a.f32[1] = 1.0f; b.f32[1] = NAN;
+    a.f32[2] = 0.0f; b.f32[2] = -0.0f;
+    a.f32[3] = -0.0f; b.f32[3] = 0.0f;
+    __asm__ volatile (
+        "vmovaps %1, %%zmm0\n\t"
+        "vmovaps %2, %%zmm1\n\t"
+        "vmaxps %%zmm1, %%zmm0, %%zmm2\n\t"
+        "vmovaps %%zmm2, %0"
+        : "=m"(dst) : "m"(a), "m"(b) : "zmm0", "zmm1", "zmm2"
+    );
+    TEST_ASSERT(dst.f32[0] == 1.0f && isnan(dst.f32[1]), "VMAXPS NaN source ordering");
+    TEST_ASSERT(dst.f32[2] == 0.0f && signbit(dst.f32[2]), "VMAXPS +0,-0 returns -0");
+    TEST_ASSERT(dst.f32[3] == 0.0f && !signbit(dst.f32[3]), "VMAXPS -0,+0 returns +0");
+
+    __asm__ volatile (
+        "vmovaps %1, %%zmm0\n\t"
+        "vmovaps %2, %%zmm1\n\t"
+        "vminps %%zmm1, %%zmm0, %%zmm2\n\t"
+        "vmovaps %%zmm2, %0"
+        : "=m"(dst) : "m"(a), "m"(b) : "zmm0", "zmm1", "zmm2"
+    );
+    TEST_ASSERT(dst.f32[0] == 1.0f && isnan(dst.f32[1]), "VMINPS NaN source ordering");
+    TEST_ASSERT(dst.f32[2] == 0.0f && signbit(dst.f32[2]), "VMINPS +0,-0 returns -0");
+    TEST_ASSERT(dst.f32[3] == 0.0f && !signbit(dst.f32[3]), "VMINPS -0,+0 returns +0");
 
     TEST_END();
 }

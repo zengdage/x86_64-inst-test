@@ -143,6 +143,49 @@ static void test_movhpd_store(void) {
     TEST_ASSERT(mem_val == 22.22, "movhpd store: expected 22.22, got %f", mem_val);
 }
 
+static void test_partial_moves_all_unaligned_offsets(void) {
+    uint8_t load_buf[32] __attribute__((aligned(16)));
+    uint8_t store_buf[32] __attribute__((aligned(16)));
+    const uint64_t value = UINT64_C(0xfff8123456789abc);
+    xmm_t initial = { .u64 = {
+        UINT64_C(0x8000000000000000), UINT64_C(0x0000000000000001)
+    } };
+    xmm_t result;
+
+#define TEST_PARTIAL_MOVE(INSN, HIGH, LABEL, OFFSET) do {                    \
+        memset(load_buf, 0xcc, sizeof(load_buf));                            \
+        memcpy(load_buf + (OFFSET), &value, sizeof(value));                  \
+        __asm__ volatile (                                                  \
+            "movdqa %1, %%xmm0\n\t" INSN " (%2), %%xmm0\n\t"          \
+            "movdqa %%xmm0, %0"                                           \
+            : "=m"(result) : "m"(initial), "r"(load_buf + (OFFSET))      \
+            : "xmm0", "memory");                                        \
+        TEST_ASSERT(result.u64[(HIGH)] == value &&                          \
+                    result.u64[1 - (HIGH)] == initial.u64[1 - (HIGH)],       \
+                    LABEL " load offset %d updates only selected half", (OFFSET)); \
+        memset(store_buf, 0x5a, sizeof(store_buf));                          \
+        __asm__ volatile (                                                  \
+            "movdqa %1, %%xmm0\n\t" INSN " %%xmm0, (%0)"                \
+            : : "r"(store_buf + (OFFSET)), "m"(initial)                    \
+            : "xmm0", "memory");                                        \
+        uint64_t stored;                                                     \
+        memcpy(&stored, store_buf + (OFFSET), sizeof(stored));               \
+        int ok = stored == initial.u64[(HIGH)];                              \
+        for (int i = 0; i < (OFFSET); i++) if (store_buf[i] != 0x5a) ok = 0; \
+        for (int i = (OFFSET) + 8; i < 32; i++)                              \
+            if (store_buf[i] != 0x5a) ok = 0;                               \
+        TEST_ASSERT(ok, LABEL " store offset %d writes selected 8 bytes only", (OFFSET)); \
+    } while (0)
+
+    for (int offset = 1; offset < 8; offset++) {
+        TEST_PARTIAL_MOVE("movlps", 0, "MOVLPS", offset);
+        TEST_PARTIAL_MOVE("movhps", 1, "MOVHPS", offset);
+        TEST_PARTIAL_MOVE("movlpd", 0, "MOVLPD", offset);
+        TEST_PARTIAL_MOVE("movhpd", 1, "MOVHPD", offset);
+    }
+#undef TEST_PARTIAL_MOVE
+}
+
 int main(void) {
     TEST_START("MOVHPS/MOVLPS/MOVHPD/MOVLPD instructions");
     test_movlps_load();
@@ -153,5 +196,6 @@ int main(void) {
     test_movlpd_store();
     test_movhpd_load();
     test_movhpd_store();
+    test_partial_moves_all_unaligned_offsets();
     TEST_END();
 }

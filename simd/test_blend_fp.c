@@ -156,6 +156,36 @@ static void test_blendvpd_mixed(void) {
     TEST_ASSERT(r.f64[1] == 2.0,  "blendvpd mixed [1] from dest: got %f", r.f64[1]);
 }
 
+static void test_blend_bit_patterns_and_mask_msb(void) {
+    xmm_t a = { .u32 = {UINT32_C(0x80000000), UINT32_C(0x7fc12345),
+                         UINT32_C(0xff800000), UINT32_C(0x00000001)} };
+    xmm_t b = { .u32 = {UINT32_C(0x00000000), UINT32_C(0x7fa54321),
+                         UINT32_C(0x7f800000), UINT32_C(0x80000001)} };
+    xmm_t r5, rf5;
+    __asm__ volatile (
+        "movdqu %2, %%xmm0\n\t" "blendps $0x05, %3, %%xmm0\n\t" "movdqu %%xmm0, %0\n\t"
+        "movdqu %2, %%xmm0\n\t" "blendps $0xf5, %3, %%xmm0\n\t" "movdqu %%xmm0, %1"
+        : "=m"(r5), "=m"(rf5) : "m"(a), "m"(b) : "xmm0");
+    for (int i = 0; i < 4; i++) {
+        uint32_t expected = (i == 0 || i == 2) ? b.u32[i] : a.u32[i];
+        TEST_ASSERT(r5.u32[i] == expected, "blendps exact bit pattern lane %d", i);
+        TEST_ASSERT(rf5.u32[i] == expected, "blendps ignores immediate bits above lane mask %d", i);
+    }
+
+    xmm_t mask = { .u32 = {UINT32_C(0x7fffffff), UINT32_C(0x80000000),
+                            UINT32_C(0xffffffff), UINT32_C(0x00000001)} };
+    xmm_t variable;
+    __asm__ volatile (
+        "movdqu %3, %%xmm0\n\t" "movdqu %1, %%xmm1\n\t"
+        "blendvps %%xmm0, %2, %%xmm1\n\t" "movdqu %%xmm1, %0"
+        : "=m"(variable) : "m"(a), "m"(b), "m"(mask) : "xmm0", "xmm1");
+    for (int i = 0; i < 4; i++) {
+        uint32_t expected = (mask.u32[i] >> 31) ? b.u32[i] : a.u32[i];
+        TEST_ASSERT(variable.u32[i] == expected,
+                    "blendvps uses only mask MSB and preserves bits lane %d", i);
+    }
+}
+
 int main(void) {
     TEST_START("BLENDPS/BLENDPD/BLENDVPS/BLENDVPD");
     test_blendps_none();
@@ -167,5 +197,6 @@ int main(void) {
     test_blendvps_all_src();
     test_blendvps_mixed();
     test_blendvpd_mixed();
+    test_blend_bit_patterns_and_mask_msb();
     TEST_END();
 }

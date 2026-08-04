@@ -10,6 +10,17 @@
  * Note: Do not use static linking.
  */
 #include "../common.h"
+#include <setjmp.h>
+#include <signal.h>
+
+static sigjmp_buf idiv_jmpbuf;
+static volatile sig_atomic_t got_sigfpe;
+
+static void idiv_sigfpe_handler(int sig) {
+    (void)sig;
+    got_sigfpe = 1;
+    siglongjmp(idiv_jmpbuf, 1);
+}
 
 static void test_idiv_positive(void) {
     int64_t quot, rem;
@@ -136,6 +147,92 @@ static void test_idiv_exact(void) {
     TEST_ASSERT(rem == 0, "idivq -49/7 remainder expected 0");
 }
 
+static void test_idiv_boundaries(void) {
+    int64_t quot, rem;
+
+    __asm__ volatile (
+        "movabsq $0x7fffffffffffffff, %%rax\n\t"
+        "cqo\n\t"
+        "movq $1, %%rcx\n\t"
+        "idivq %%rcx\n\t"
+        "movq %%rax, %0\n\t"
+        "movq %%rdx, %1"
+        : "=r"(quot), "=r"(rem)
+        :
+        : "rax", "rcx", "rdx", "cc"
+    );
+    TEST_ASSERT(quot == INT64_MAX && rem == 0, "idivq INT64_MAX/1 boundary");
+
+    __asm__ volatile (
+        "movabsq $0x8000000000000000, %%rax\n\t"
+        "cqo\n\t"
+        "movq $1, %%rcx\n\t"
+        "idivq %%rcx\n\t"
+        "movq %%rax, %0\n\t"
+        "movq %%rdx, %1"
+        : "=r"(quot), "=r"(rem)
+        :
+        : "rax", "rcx", "rdx", "cc"
+    );
+    TEST_ASSERT(quot == INT64_MIN && rem == 0, "idivq INT64_MIN/1 boundary");
+
+    __asm__ volatile (
+        "movabsq $0x8000000000000000, %%rax\n\t"
+        "cqo\n\t"
+        "movabsq $0x8000000000000000, %%rcx\n\t"
+        "idivq %%rcx\n\t"
+        "movq %%rax, %0\n\t"
+        "movq %%rdx, %1"
+        : "=r"(quot), "=r"(rem)
+        :
+        : "rax", "rcx", "rdx", "cc"
+    );
+    TEST_ASSERT(quot == 1 && rem == 0, "idivq INT64_MIN/INT64_MIN boundary");
+}
+
+static void test_idiv_errors(void) {
+    struct sigaction sa, old_sa;
+
+    sa.sa_handler = idiv_sigfpe_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGFPE, &sa, &old_sa);
+
+    got_sigfpe = 0;
+    if (sigsetjmp(idiv_jmpbuf, 1) == 0) {
+        __asm__ volatile (
+            "movq $1, %%rax\n\t"
+            "cqo\n\t"
+            "xorq %%rcx, %%rcx\n\t"
+            "idivq %%rcx"
+            :
+            :
+            : "rax", "rcx", "rdx", "cc"
+        );
+        TEST_ASSERT(0, "idivq by zero should generate SIGFPE");
+    } else {
+        TEST_ASSERT(got_sigfpe, "idivq by zero generated SIGFPE");
+    }
+
+    got_sigfpe = 0;
+    if (sigsetjmp(idiv_jmpbuf, 1) == 0) {
+        __asm__ volatile (
+            "movabsq $0x8000000000000000, %%rax\n\t"
+            "cqo\n\t"
+            "movq $-1, %%rcx\n\t"
+            "idivq %%rcx"
+            :
+            :
+            : "rax", "rcx", "rdx", "cc"
+        );
+        TEST_ASSERT(0, "idivq INT64_MIN/-1 should generate SIGFPE");
+    } else {
+        TEST_ASSERT(got_sigfpe, "idivq INT64_MIN/-1 overflow generated SIGFPE");
+    }
+
+    sigaction(SIGFPE, &old_sa, NULL);
+}
+
 int main(void) {
     TEST_START("IDIV instruction");
     test_idiv_positive();
@@ -145,5 +242,7 @@ int main(void) {
     test_idiv_32bit();
     test_idiv_zero_dividend();
     test_idiv_exact();
+    test_idiv_boundaries();
+    test_idiv_errors();
     TEST_END();
 }

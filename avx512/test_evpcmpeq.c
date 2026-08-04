@@ -24,11 +24,15 @@ typedef union {
     double f64[8];
 } zmm_t __attribute__((aligned(64)));
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx512(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile ("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
     return ((ebx >> 16) & 1) && ((ebx >> 30) & 1);
 }
+#else
+#define check_avx512() 1
+#endif
 
 int main(void) {
     if (!check_avx512()) {
@@ -107,6 +111,69 @@ int main(void) {
     uint32_t expected_mask = 0;
     for (int i = 0; i < 32; i++) if (i % 2 == 0) expected_mask |= (1u << i);
     TEST_ASSERT((kmask & 0xFFFFFFFF) == expected_mask, "VPCMPEQW alternating: mask=%08llx", (unsigned long long)kmask);
+
+    /* Endpoint result bits, k=0 zeroing, and exact valid mask widths.  Fill
+       k1 with ones before each compare so stale high bits are observable. */
+#define TEST_CMPEQ_MASK_BOUNDARY(FIELD, MOVE, INSN, LANES, VALID, ENDPOINTS) do { \
+        uint64_t gate; \
+        for (int i = 0; i < (LANES); i++) { a.FIELD[i] = 0; b.FIELD[i] = 1; } \
+        b.FIELD[0] = 0; b.FIELD[(LANES) - 1] = 0; \
+        __asm__ volatile ( \
+            "kxnorq %%k1,%%k1,%%k1\n\t" MOVE " %1,%%zmm0\n\t" \
+            MOVE " %2,%%zmm1\n\t" INSN " %%zmm1,%%zmm0,%%k1\n\t" \
+            "kmovq %%k1,%0" \
+            : "=r"(kmask) : "m"(a), "m"(b) : "zmm0", "zmm1", "k1"); \
+        TEST_ASSERT(kmask == (ENDPOINTS), \
+                    INSN " lowest/highest result bits and high-bit clearing: %016llx", \
+                    (unsigned long long)kmask); \
+        for (int i = 0; i < (LANES); i++) b.FIELD[i] = a.FIELD[i]; \
+        gate = 0; \
+        __asm__ volatile ( \
+            "kxnorq %%k1,%%k1,%%k1\n\tkmovq %3,%%k2\n\t" \
+            MOVE " %1,%%zmm0\n\t" MOVE " %2,%%zmm1\n\t" \
+            INSN " %%zmm1,%%zmm0,%%k1%{%%k2%}\n\tkmovq %%k1,%0" \
+            : "=r"(kmask) : "m"(a), "m"(b), "r"(gate) \
+            : "zmm0", "zmm1", "k1", "k2"); \
+        TEST_ASSERT(kmask == 0, INSN " k=0 clears the complete result mask"); \
+        gate = (VALID); \
+        __asm__ volatile ( \
+            "kxnorq %%k1,%%k1,%%k1\n\tkmovq %3,%%k2\n\t" \
+            MOVE " %1,%%zmm0\n\t" MOVE " %2,%%zmm1\n\t" \
+            INSN " %%zmm1,%%zmm0,%%k1%{%%k2%}\n\tkmovq %%k1,%0" \
+            : "=r"(kmask) : "m"(a), "m"(b), "r"(gate) \
+            : "zmm0", "zmm1", "k1", "k2"); \
+        TEST_ASSERT(kmask == (VALID), INSN " k=all exact valid mask width: %016llx", \
+                    (unsigned long long)kmask); \
+    } while (0)
+    TEST_CMPEQ_MASK_BOUNDARY(u8,  "vmovdqu8",  "vpcmpeqb", 64,
+                            UINT64_MAX, UINT64_C(0x8000000000000001));
+    TEST_CMPEQ_MASK_BOUNDARY(u16, "vmovdqu16", "vpcmpeqw", 32,
+                            UINT64_C(0xffffffff), UINT64_C(0x80000001));
+    TEST_CMPEQ_MASK_BOUNDARY(u32, "vmovdqu32", "vpcmpeqd", 16,
+                            UINT64_C(0xffff), UINT64_C(0x8001));
+    TEST_CMPEQ_MASK_BOUNDARY(u64, "vmovdqu64", "vpcmpeqq", 8,
+                            UINT64_C(0xff), UINT64_C(0x81));
+#undef TEST_CMPEQ_MASK_BOUNDARY
+
+    /* AVX-512VL uses narrower architectural result masks for XMM/YMM. */
+    for (int i = 0; i < 8; i++) { a.u32[i] = (uint32_t)i; b.u32[i] = a.u32[i]; }
+    __asm__ volatile (
+        "kxnorq %%k1,%%k1,%%k1\n\tvmovdqu32 %1,%%xmm0\n\t"
+        "vmovdqu32 %2,%%xmm1\n\tvpcmpeqd %%xmm1,%%xmm0,%%k1\n\t"
+        "kmovq %%k1,%0"
+        : "=r"(kmask) : "m"(a), "m"(b) : "xmm0", "xmm1", "k1");
+    TEST_ASSERT(kmask == UINT64_C(0x0f),
+                "VPCMPEQD xmm clears bits above four valid lanes: %016llx",
+                (unsigned long long)kmask);
+    b.u32[0] ^= 1;
+    __asm__ volatile (
+        "kxnorq %%k1,%%k1,%%k1\n\tvmovdqu32 %1,%%ymm0\n\t"
+        "vmovdqu32 %2,%%ymm1\n\tvpcmpeqd %%ymm1,%%ymm0,%%k1\n\t"
+        "kmovq %%k1,%0"
+        : "=r"(kmask) : "m"(a), "m"(b) : "ymm0", "ymm1", "k1");
+    TEST_ASSERT(kmask == UINT64_C(0xfe),
+                "VPCMPEQD ymm result width and lowest-lane boundary: %016llx",
+                (unsigned long long)kmask);
 
     TEST_END();
 }

@@ -120,11 +120,49 @@ static void test_neg_sizes(void) {
     TEST_ASSERT(flags & OF_FLAG, "negl INT32_MIN: OF should be set");
 }
 
+static void test_neg_small_minima_and_memory(void) {
+    uint8_t r8;
+    uint16_t r16;
+    uint64_t flags;
+    uint64_t mem = 1;
+
+    __asm__ volatile (
+        "movb $0x80, %%al\n\tnegb %%al\n\tmovb %%al, %0\n\t"
+        "pushfq\n\tpopq %1"
+        : "=r"(r8), "=r"(flags) : : "rax", "cc"
+    );
+    TEST_ASSERT(r8 == UINT8_C(0x80), "negb INT8_MIN preserves bit pattern");
+    TEST_ASSERT(flags & OF_FLAG, "negb INT8_MIN sets OF");
+    TEST_ASSERT(flags & CF_FLAG, "negb nonzero operand sets CF");
+    TEST_ASSERT(flags & SF_FLAG, "negb INT8_MIN result sets SF");
+    TEST_ASSERT(!(flags & ZF_FLAG), "negb INT8_MIN result clears ZF");
+    TEST_ASSERT(!(flags & PF_FLAG), "negb 0x80 result has odd parity");
+
+    __asm__ volatile (
+        "movw $0x8000, %%ax\n\tnegw %%ax\n\tmovw %%ax, %0\n\t"
+        "pushfq\n\tpopq %1"
+        : "=r"(r16), "=r"(flags) : : "rax", "cc"
+    );
+    TEST_ASSERT(r16 == UINT16_C(0x8000), "negw INT16_MIN preserves bit pattern");
+    TEST_ASSERT(flags & OF_FLAG, "negw INT16_MIN sets OF");
+    TEST_ASSERT(flags & CF_FLAG, "negw nonzero operand sets CF");
+    TEST_ASSERT(flags & SF_FLAG, "negw INT16_MIN result sets SF");
+
+    __asm__ volatile (
+        "negq %0\n\tpushfq\n\tpopq %1"
+        : "+m"(mem), "=r"(flags) : : "cc"
+    );
+    TEST_ASSERT(mem == UINT64_MAX, "negq memory 1 -> UINT64_MAX");
+    TEST_ASSERT(flags & CF_FLAG, "negq memory nonzero operand sets CF");
+    TEST_ASSERT(flags & SF_FLAG, "negq memory result sets SF");
+}
+
 int main(void) {
     TEST_START("NEG instruction");
     test_neg_basic();
     test_neg_zero();
     test_neg_min();
     test_neg_sizes();
+    test_neg_small_minima_and_memory();
     TEST_END();
 }

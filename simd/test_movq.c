@@ -116,6 +116,51 @@ static void test_movq_max(void) {
     TEST_ASSERT(dst.u64[1] == 0, "movq max high zeroed: got 0x%016lx", dst.u64[1]);
 }
 
+static void test_vmovq_upper_ymm_clear_and_unaligned_memory(void) {
+    ymm_t initial, result;
+    uint64_t value = UINT64_C(0x8000000000000001);
+    memset(&initial, 0xa5, sizeof(initial));
+    __asm__ volatile (
+        "vmovdqu %1, %%ymm2\n\t"
+        "vmovq %2, %%xmm2\n\t"
+        "vmovdqu %%ymm2, %0"
+        : "=m"(result) : "m"(initial), "r"(value) : "ymm2"
+    );
+    TEST_ASSERT(result.u64[0] == value, "VMOVQ GPR source low qword");
+    TEST_ASSERT(result.u64[1] == 0 && result.u64[2] == 0 && result.u64[3] == 0,
+                "VMOVQ GPR source clears XMM high qword and upper YMM");
+
+    uint8_t load_buf[32] __attribute__((aligned(16)));
+    uint8_t store_buf[32] __attribute__((aligned(16)));
+    for (int offset = 1; offset < 8; offset++) {
+        memset(load_buf, 0xcc, sizeof(load_buf));
+        memcpy(load_buf + offset, &value, sizeof(value));
+        __asm__ volatile (
+            "vmovdqu %1, %%ymm2\n\t"
+            "vmovq (%2), %%xmm2\n\t"
+            "vmovdqu %%ymm2, %0"
+            : "=m"(result) : "m"(initial), "r"(load_buf + offset)
+            : "ymm2", "memory"
+        );
+        TEST_ASSERT(result.u64[0] == value && result.u64[1] == 0 &&
+                    result.u64[2] == 0 && result.u64[3] == 0,
+                    "VMOVQ memory load offset %d clears remaining destination bits", offset);
+
+        memset(store_buf, 0x5a, sizeof(store_buf));
+        __asm__ volatile (
+            "vmovq %1, %%xmm0\n\t"
+            "vmovq %%xmm0, (%0)"
+            : : "r"(store_buf + offset), "r"(value) : "xmm0", "memory"
+        );
+        uint64_t stored;
+        memcpy(&stored, store_buf + offset, sizeof(stored));
+        int ok = stored == value;
+        for (int i = 0; i < offset; i++) if (store_buf[i] != 0x5a) ok = 0;
+        for (int i = offset + 8; i < 32; i++) if (store_buf[i] != 0x5a) ok = 0;
+        TEST_ASSERT(ok, "VMOVQ store offset %d writes exactly 8 bytes", offset);
+    }
+}
+
 int main(void) {
     TEST_START("MOVQ instruction");
     test_movq_gpr_to_xmm();
@@ -125,5 +170,6 @@ int main(void) {
     test_movq_xmm_to_xmm();
     test_movq_zero();
     test_movq_max();
+    test_vmovq_upper_ymm_clear_and_unaligned_memory();
     TEST_END();
 }

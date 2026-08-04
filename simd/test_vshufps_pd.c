@@ -70,11 +70,37 @@ static void test_vshufpd_256(void) {
     TEST_ASSERT(dst.f64[3] == 7.0, "vshufpd [3]: got %f", dst.f64[3]);
 }
 
+static void test_vshuffle_immediate_and_width_boundaries(void) {
+    ymm_t a = { .u32 = {0,1,2,3,4,5,6,7} };
+    ymm_t b = { .u32 = {10,11,12,13,14,15,16,17} };
+    ymm_t result;
+    __asm__ volatile (
+        "vmovdqu %1, %%xmm0\n\t" "vshufps $0xff, %2, %%xmm0, %%xmm1\n\t"
+        "vmovdqu %%ymm1, %0"
+        : "=m"(result) : "m"(a), "m"(b) : "xmm0", "xmm1");
+    uint32_t expected_ps[] = {3,3,13,13};
+    for (int i = 0; i < 4; i++) TEST_ASSERT(result.u32[i] == expected_ps[i], "vshufps xmm imm=ff lane %d", i);
+    for (int i = 4; i < 8; i++) TEST_ASSERT(result.u32[i] == 0, "VEX.128 vshufps zeroes upper ymm lane %d", i);
+
+    ymm_t pd0f, pdff;
+    __asm__ volatile (
+        "vmovdqu %2, %%ymm0\n\t" "vshufpd $0x0f, %3, %%ymm0, %%ymm1\n\t"
+        "vshufpd $0xff, %3, %%ymm0, %%ymm2\n\t"
+        "vmovdqu %%ymm1, %0\n\t" "vmovdqu %%ymm2, %1"
+        : "=m"(pd0f), "=m"(pdff) : "m"(a), "m"(b) : "ymm0", "ymm1", "ymm2");
+    TEST_ASSERT(memcmp(&pd0f, &pdff, sizeof(pd0f)) == 0,
+                "vshufpd ymm ignores immediate bits 7:4");
+    TEST_ASSERT(pdff.u64[0] == a.u64[1] && pdff.u64[1] == b.u64[1] &&
+                pdff.u64[2] == a.u64[3] && pdff.u64[3] == b.u64[3],
+                "vshufpd imm=ff selects high qword in each 128-bit lane");
+}
+
 int main(void) {
     TEST_START("VSHUFPS/VSHUFPD instructions (AVX 256-bit)");
     test_vshufps_256();
     test_vshufps_identity();
     test_vshufpd_256();
+    test_vshuffle_immediate_and_width_boundaries();
     __asm__ volatile ("vzeroupper");
     TEST_END();
 }

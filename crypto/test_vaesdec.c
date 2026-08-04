@@ -17,6 +17,7 @@
  * Note: Do not use static linking.
  */
 #include "../common.h"
+#include "aes_ref.h"
 
 /* Test VAESDEC xmm, xmm, xmm */
 static void test_vaesdec_reg(void) {
@@ -25,6 +26,7 @@ static void test_vaesdec_reg(void) {
     xmm_t rkey  = { .u8 = {0x0f,0x0e,0x0d,0x0c,0x0b,0x0a,0x09,0x08,
                             0x07,0x06,0x05,0x04,0x03,0x02,0x01,0x00} };
     xmm_t result;
+    xmm_t expected;
 
     __asm__ volatile (
         "vmovdqu %1, %%xmm0\n\t"
@@ -35,6 +37,9 @@ static void test_vaesdec_reg(void) {
         : "m"(state), "m"(rkey)
         : "xmm0", "xmm1", "xmm2"
     );
+    aes_ref_dec_round(state.u8, rkey.u8, expected.u8, 0);
+    TEST_ASSERT(memcmp(&result, &expected, 16) == 0,
+                "vaesdec matches independent AES round reference");
 
     /* Determinism */
     xmm_t result2;
@@ -61,6 +66,7 @@ static void test_vaesdec_matches_legacy(void) {
     xmm_t rkey  = { .u8 = {0x10,0x20,0x30,0x40,0x50,0x60,0x70,0x80,
                             0x90,0xa0,0xb0,0xc0,0xd0,0xe0,0xf0,0x00} };
     xmm_t result_vex, result_legacy;
+    xmm_t expected;
 
     __asm__ volatile (
         "vmovdqu %1, %%xmm0\n\t"
@@ -71,6 +77,7 @@ static void test_vaesdec_matches_legacy(void) {
         : "m"(state), "m"(rkey)
         : "xmm0", "xmm1", "xmm2"
     );
+    aes_ref_dec_round(state.u8, rkey.u8, expected.u8, 0);
 
     __asm__ volatile (
         "movdqu %1, %%xmm0\n\t"
@@ -84,6 +91,8 @@ static void test_vaesdec_matches_legacy(void) {
 
     TEST_ASSERT(memcmp(&result_vex, &result_legacy, 16) == 0,
                 "vaesdec matches legacy aesdec");
+    TEST_ASSERT(memcmp(&result_vex, &expected, 16) == 0,
+                "vaesdec and legacy result match independent reference");
 }
 
 /* Test VAESDEC xmm, xmm, mem */
@@ -93,6 +102,7 @@ static void test_vaesdec_mem(void) {
     xmm_t rkey  = { .u8 = {0x2b,0x7e,0x15,0x16,0x28,0xae,0xd2,0xa6,
                             0xab,0xf7,0x15,0x88,0x09,0xcf,0x4f,0x3c} };
     xmm_t result_reg, result_mem;
+    xmm_t expected;
 
     __asm__ volatile (
         "vmovdqu %1, %%xmm0\n\t"
@@ -103,6 +113,7 @@ static void test_vaesdec_mem(void) {
         : "m"(state), "m"(rkey)
         : "xmm0", "xmm1", "xmm2"
     );
+    aes_ref_dec_round(state.u8, rkey.u8, expected.u8, 0);
 
     __asm__ volatile (
         "vmovdqu %1, %%xmm0\n\t"
@@ -115,6 +126,8 @@ static void test_vaesdec_mem(void) {
 
     TEST_ASSERT(memcmp(&result_reg, &result_mem, 16) == 0,
                 "vaesdec: reg-reg-reg and reg-reg-mem produce same result");
+    TEST_ASSERT(memcmp(&result_mem, &expected, 16) == 0,
+                "vaesdec memory source matches independent reference");
 }
 
 /* Test VAESDEC non-destructive */
@@ -150,6 +163,7 @@ static void test_vaesdeclast_reg(void) {
     xmm_t rkey  = { .u8 = {0x0f,0x0e,0x0d,0x0c,0x0b,0x0a,0x09,0x08,
                             0x07,0x06,0x05,0x04,0x03,0x02,0x01,0x00} };
     xmm_t result;
+    xmm_t expected;
 
     __asm__ volatile (
         "vmovdqu %1, %%xmm0\n\t"
@@ -160,6 +174,9 @@ static void test_vaesdeclast_reg(void) {
         : "m"(state), "m"(rkey)
         : "xmm0", "xmm1", "xmm2"
     );
+    aes_ref_dec_round(state.u8, rkey.u8, expected.u8, 1);
+    TEST_ASSERT(memcmp(&result, &expected, 16) == 0,
+                "vaesdeclast matches independent AES last-round reference");
 
     TEST_ASSERT(memcmp(&result, &state, 16) != 0,
                 "vaesdeclast xmm,xmm,xmm: output differs from input");
@@ -172,6 +189,7 @@ static void test_vaesdeclast_matches_legacy(void) {
     xmm_t rkey  = { .u8 = {0x10,0x20,0x30,0x40,0x50,0x60,0x70,0x80,
                             0x90,0xa0,0xb0,0xc0,0xd0,0xe0,0xf0,0x00} };
     xmm_t result_vex, result_legacy;
+    xmm_t expected;
 
     __asm__ volatile (
         "vmovdqu %1, %%xmm0\n\t"
@@ -182,6 +200,7 @@ static void test_vaesdeclast_matches_legacy(void) {
         : "m"(state), "m"(rkey)
         : "xmm0", "xmm1", "xmm2"
     );
+    aes_ref_dec_round(state.u8, rkey.u8, expected.u8, 1);
 
     __asm__ volatile (
         "movdqu %1, %%xmm0\n\t"
@@ -195,6 +214,8 @@ static void test_vaesdeclast_matches_legacy(void) {
 
     TEST_ASSERT(memcmp(&result_vex, &result_legacy, 16) == 0,
                 "vaesdeclast matches legacy aesdeclast");
+    TEST_ASSERT(memcmp(&result_vex, &expected, 16) == 0,
+                "vaesdeclast and legacy result match independent reference");
 }
 
 /* Test VAESDECLAST xmm, xmm, mem */
@@ -204,6 +225,7 @@ static void test_vaesdeclast_mem(void) {
     xmm_t rkey  = { .u8 = {0x2b,0x7e,0x15,0x16,0x28,0xae,0xd2,0xa6,
                             0xab,0xf7,0x15,0x88,0x09,0xcf,0x4f,0x3c} };
     xmm_t result_reg, result_mem;
+    xmm_t expected;
 
     __asm__ volatile (
         "vmovdqu %1, %%xmm0\n\t"
@@ -214,6 +236,7 @@ static void test_vaesdeclast_mem(void) {
         : "m"(state), "m"(rkey)
         : "xmm0", "xmm1", "xmm2"
     );
+    aes_ref_dec_round(state.u8, rkey.u8, expected.u8, 1);
 
     __asm__ volatile (
         "vmovdqu %1, %%xmm0\n\t"
@@ -226,6 +249,8 @@ static void test_vaesdeclast_mem(void) {
 
     TEST_ASSERT(memcmp(&result_reg, &result_mem, 16) == 0,
                 "vaesdeclast: reg-reg-reg and reg-reg-mem produce same result");
+    TEST_ASSERT(memcmp(&result_mem, &expected, 16) == 0,
+                "vaesdeclast memory source matches independent reference");
 }
 
 /* Test VAESDEC vs VAESDECLAST difference */

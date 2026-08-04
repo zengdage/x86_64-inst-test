@@ -15,9 +15,26 @@
  */
 
 #include "../common.h"
+#include <signal.h>
+#include <setjmp.h>
 
-static int has_xsave(void)
-{
+static sigjmp_buf xgetbv_fault_env;
+static volatile sig_atomic_t got_xgetbv_fault;
+
+static void xgetbv_fault_handler(int sig) {
+    (void)sig;
+    got_xgetbv_fault = 1;
+    siglongjmp(xgetbv_fault_env, 1);
+}
+
+static uint64_t read_xcr0(void) {
+    uint32_t lo, hi;
+    __asm__ volatile ("xgetbv" : "=a"(lo), "=d"(hi) : "c"(0));
+    return ((uint64_t)hi << 32) | lo;
+}
+
+#if ENABLE_RUNTIME_CPU_CHECKS
+static int has_xsave(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile (
         "cpuid"
@@ -26,9 +43,12 @@ static int has_xsave(void)
     );
     return (ecx >> 26) & 1;
 }
+#else
+#define has_xsave() 1
+#endif
 
-static int has_osxsave(void)
-{
+#if ENABLE_RUNTIME_CPU_CHECKS
+static int has_osxsave(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile (
         "cpuid"
@@ -37,6 +57,9 @@ static int has_osxsave(void)
     );
     return (ecx >> 27) & 1;
 }
+#else
+#define has_osxsave() 1
+#endif
 
 /* Test XGETBV with ECX=0 (read XCR0) */
 static void test_xgetbv_xcr0(void)
@@ -71,6 +94,11 @@ static void test_xgetbv_xcr0(void)
 
     /* On x86-64 with SSE2 (mandatory), bit 1 should also be set */
     TEST_ASSERT(xcr0 & (1ULL << 1), "XCR0 bit 1 (SSE) should be set on x86-64");
+    TEST_ASSERT(!(xcr0 & (1ULL << 2)) || (xcr0 & (1ULL << 1)),
+                "XCR0 AVX state requires SSE state");
+    uint64_t avx512_state = xcr0 & (UINT64_C(0x7) << 5);
+    TEST_ASSERT(avx512_state == 0 || avx512_state == (UINT64_C(0x7) << 5),
+                "XCR0 AVX-512 state bits 5/6/7 are enabled as a group");
 }
 
 /* Test XGETBV consistency */
@@ -138,7 +166,38 @@ static void test_xgetbv_cpuid_consistency(void)
         /* AVX in CPUID means hardware support exists; OS may or may not enable it */
         printf("  CPU supports AVX; OS %s enabled it in XCR0\n",
                xcr0_avx ? "has" : "has NOT");
-        TEST_ASSERT(1, "AVX hardware support detected; XCR0 AVX bit = %d", xcr0_avx);
+        TEST_ASSERT(!xcr0_avx || (xcr0 & (1ULL << 1)),
+                    "Enabled AVX state includes SSE dependency");
+    }
+}
+
+static void test_xgetbv_index1(void)
+{
+    uint32_t eax, ebx, ecx, edx;
+    __asm__ volatile ("cpuid"
+                      : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+                      : "a"(0x0d), "c"(1));
+    int xgetbv1 = (eax >> 2) & 1;
+    if (xgetbv1) {
+        uint32_t lo, hi;
+        __asm__ volatile ("xgetbv" : "=a"(lo), "=d"(hi) : "c"(1));
+        uint64_t xinuse = ((uint64_t)hi << 32) | lo;
+        uint64_t xcr0 = read_xcr0();
+        TEST_ASSERT((xinuse & ~xcr0) == 0,
+                    "XGETBV(1) XINUSE is a subset of enabled XCR0 state");
+    } else {
+        struct sigaction sa, old_segv, old_bus;
+        memset(&sa, 0, sizeof(sa));
+        sa.sa_handler = xgetbv_fault_handler;
+        sigemptyset(&sa.sa_mask);
+        sigaction(SIGSEGV, &sa, &old_segv);
+        sigaction(SIGBUS, &sa, &old_bus);
+        got_xgetbv_fault = 0;
+        if (sigsetjmp(xgetbv_fault_env, 1) == 0)
+            __asm__ volatile ("xgetbv" : : "c"(1) : "eax", "edx");
+        sigaction(SIGSEGV, &old_segv, NULL);
+        sigaction(SIGBUS, &old_bus, NULL);
+        TEST_ASSERT(got_xgetbv_fault, "Unsupported XGETBV index 1 raises #GP");
     }
 }
 
@@ -187,6 +246,7 @@ int main(void)
     test_xgetbv_consistency();
     test_xgetbv_cpuid_consistency();
     test_xgetbv_no_flag_change();
+    test_xgetbv_index1();
 
     TEST_END();
 }

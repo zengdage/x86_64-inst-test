@@ -299,6 +299,60 @@ static void test_denormal(void) {
     TEST_ASSERT(result == DBL_MIN, "fmul denormal*2 = DBL_MIN");
 }
 
+static void test_fmul_fdiv_exception_status_and_range(void) {
+    double zero = 0.0, one = 1.0, neg_one = -1.0, inf = INFINITY;
+    double result;
+    uint16_t status;
+
+    __asm__ volatile (
+        "fnclex\n\tfldl %2\n\tfmull %3\n\tfstpl %0\n\tfnstsw %1"
+        : "=m"(result), "=m"(status) : "m"(zero), "m"(inf) : "memory"
+    );
+    TEST_ASSERT(isnan(result), "fmul zero times infinity produces NaN");
+    TEST_ASSERT(status & 1, "fmul zero times infinity sets invalid status");
+
+    __asm__ volatile (
+        "fnclex\n\tfldl %2\n\tfdivl %3\n\tfstpl %0\n\tfnstsw %1"
+        : "=m"(result), "=m"(status) : "m"(one), "m"(zero) : "memory"
+    );
+    TEST_ASSERT(isinf(result) && result > 0, "fdiv positive finite by +0 gives +inf");
+    TEST_ASSERT(status & (1u << 2), "fdiv finite by zero sets divide-by-zero status");
+    TEST_ASSERT(!(status & 1), "fdiv finite by zero does not set invalid status");
+
+    __asm__ volatile (
+        "fnclex\n\tfldl %2\n\tfdivl %3\n\tfstpl %0\n\tfnstsw %1"
+        : "=m"(result), "=m"(status) : "m"(neg_one), "m"(zero) : "memory"
+    );
+    TEST_ASSERT(isinf(result) && signbit(result), "fdiv negative finite by +0 gives -inf");
+    TEST_ASSERT(status & (1u << 2), "negative fdiv by zero sets divide-by-zero status");
+
+    __asm__ volatile (
+        "fnclex\n\tfldl %2\n\tfdivl %3\n\tfstpl %0\n\tfnstsw %1"
+        : "=m"(result), "=m"(status) : "m"(zero), "m"(zero) : "memory"
+    );
+    TEST_ASSERT(isnan(result), "fdiv zero by zero produces NaN");
+    TEST_ASSERT(status & 1, "fdiv zero by zero sets invalid status");
+
+    double max = DBL_MAX, two = 2.0;
+    __asm__ volatile (
+        "fnclex\n\tfldl %2\n\tfmull %3\n\tfstpl %0\n\tfnstsw %1"
+        : "=m"(result), "=m"(status) : "m"(max), "m"(two) : "memory"
+    );
+    TEST_ASSERT(isinf(result), "fmul DBL_MAX by two overflows double store");
+    TEST_ASSERT(status & (1u << 3), "fmul/store overflow sets overflow status");
+    TEST_ASSERT(status & (1u << 5), "fmul/store overflow sets precision status");
+
+    double min = DBL_MIN;
+    __asm__ volatile (
+        "fnclex\n\tfldl %2\n\tfmull %3\n\tfstpl %0\n\tfnstsw %1"
+        : "=m"(result), "=m"(status) : "m"(min), "m"(min) : "memory"
+    );
+    TEST_ASSERT(result == 0.0, "fmul DBL_MIN squared underflows double store to zero");
+    TEST_ASSERT(status & (1u << 4), "fmul/store underflow sets underflow status");
+    TEST_ASSERT(status & (1u << 5), "fmul/store underflow sets precision status");
+    __asm__ volatile("fnclex");
+}
+
 int main(void) {
     TEST_START("FMUL/FMULP/FDIV/FDIVP/FDIVR/FDIVRP instructions");
     test_fmul_mem();
@@ -308,5 +362,6 @@ int main(void) {
     test_fdivr();
     test_fdivrp();
     test_denormal();
+    test_fmul_fdiv_exception_status_and_range();
     TEST_END();
 }

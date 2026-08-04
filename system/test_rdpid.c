@@ -18,6 +18,7 @@
 #include <signal.h>
 #include <setjmp.h>
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static sigjmp_buf jmp_env;
 static volatile int got_sigill = 0;
 
@@ -78,6 +79,11 @@ static int rdpid_works(void)
     sigaction(SIGILL, &old_sa, NULL);
     return !got_sigill;
 }
+#else
+#define has_rdpid_cpuid() 1
+#define has_rdtscp() 1
+#define rdpid_works() 1
+#endif
 
 /* Test basic RDPID */
 static void test_rdpid_basic(void)
@@ -93,7 +99,7 @@ static void test_rdpid_basic(void)
     );
 
     printf("  Processor ID (IA32_TSC_AUX): %" PRIu64 " (0x%016" PRIX64 ")\n", pid, pid);
-    TEST_ASSERT(1, "RDPID executed successfully");
+    TEST_ASSERT((pid >> 32) == 0, "RDPID r64 zero-extends IA32_TSC_AUX: 0x%016" PRIX64, pid);
 }
 
 /* Test RDPID consistency - multiple reads on same CPU should match */
@@ -125,7 +131,7 @@ static void test_rdpid_consistency(void)
 /* Test RDPID matches RDTSCP's ECX value */
 static void test_rdpid_vs_rdtscp(void)
 {
-    uint64_t rdpid_val;
+    uint64_t rdpid_before, rdpid_after;
     uint32_t tsc_lo, tsc_hi, rdtscp_aux;
 
     TEST_START("RDPID - Compare with RDTSCP aux value");
@@ -135,10 +141,10 @@ static void test_rdpid_vs_rdtscp(void)
         return;
     }
 
-    /* Read both back-to-back to minimize chance of CPU migration */
+    /* Bracket RDTSCP so a migration can be detected instead of causing a false failure. */
     __asm__ volatile (
         ".byte 0xF3, 0x48, 0x0F, 0xC7, 0xF8"
-        : "=a"(rdpid_val)
+        : "=a"(rdpid_before)
     );
 
     __asm__ volatile (
@@ -146,13 +152,22 @@ static void test_rdpid_vs_rdtscp(void)
         : "=a"(tsc_lo), "=d"(tsc_hi), "=c"(rdtscp_aux)
     );
 
-    printf("  RDPID value:     %" PRIu64 "\n", rdpid_val);
+    __asm__ volatile (
+        ".byte 0xF3, 0x48, 0x0F, 0xC7, 0xF8"
+        : "=a"(rdpid_after)
+    );
+
+    printf("  RDPID value:     %" PRIu64 "\n", rdpid_before);
     printf("  RDTSCP ECX value: %u\n", rdtscp_aux);
 
-    /* Both should read IA32_TSC_AUX, so they should match if no migration occurred */
-    TEST_ASSERT((uint32_t)rdpid_val == rdtscp_aux,
-                "RDPID and RDTSCP aux should match: %u vs %u (unless CPU migration occurred)",
-                (uint32_t)rdpid_val, rdtscp_aux);
+    if (rdpid_before == rdpid_after) {
+        TEST_ASSERT((uint32_t)rdpid_before == rdtscp_aux,
+                    "RDPID and RDTSCP aux match without migration: %u vs %u",
+                    (uint32_t)rdpid_before, rdtscp_aux);
+    } else {
+        TEST_ASSERT((uint32_t)rdpid_after == rdtscp_aux,
+                    "RDTSCP aux matches the post-migration RDPID value");
+    }
 }
 
 int main(void)

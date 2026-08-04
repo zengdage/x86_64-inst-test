@@ -115,6 +115,33 @@ static void test_extractps_lane0(void) {
     TEST_ASSERT(out == 0xDEADBEEFu, "extractps $0 to reg: expected 0xDEADBEEF, got 0x%x", out);
 }
 
+static void test_insertps_extractps_immediate_boundaries(void) {
+    xmm_t dst = { .u32 = {0x10,0x20,0x30,0x40} };
+    xmm_t src = { .u32 = {0x111,0x222,0x333,0x444} };
+    xmm_t reg_result, mem_select0, mem_select3;
+    uint32_t mem = UINT32_C(0xa5a5a5a5);
+    __asm__ volatile (
+        "movdqu %3, %%xmm0\n\t" "movdqu %4, %%xmm1\n\t"
+        "insertps $0xf0, %%xmm1, %%xmm0\n\t" "movdqu %%xmm0, %0\n\t"
+        "movdqu %3, %%xmm0\n\t" "insertps $0x20, %5, %%xmm0\n\t" "movdqu %%xmm0, %1\n\t"
+        "movdqu %3, %%xmm0\n\t" "insertps $0xe0, %5, %%xmm0\n\t" "movdqu %%xmm0, %2"
+        : "=m"(reg_result), "=m"(mem_select0), "=m"(mem_select3)
+        : "m"(dst), "m"(src), "m"(mem) : "xmm0", "xmm1");
+    for (int i = 0; i < 4; i++)
+        TEST_ASSERT(reg_result.u32[i] == (i == 3 ? src.u32[3] : dst.u32[i]),
+                    "insertps src3/dst3 lane %d", i);
+    TEST_ASSERT(memcmp(&mem_select0, &mem_select3, sizeof(mem_select0)) == 0,
+                "insertps memory source ignores imm8 source-select bits");
+
+    uint64_t extracted;
+    __asm__ volatile (
+        "movq $-1, %%rax\n\t" "movdqu %1, %%xmm0\n\t"
+        "extractps $0xff, %%xmm0, %%eax\n\t" "movq %%rax, %0"
+        : "=r"(extracted) : "m"(src) : "rax", "xmm0");
+    TEST_ASSERT(extracted == src.u32[3],
+                "extractps imm=ff selects lane3 and zero-extends RAX");
+}
+
 int main(void) {
     TEST_START("INSERTPS/EXTRACTPS");
     test_insertps_from_xmm();
@@ -124,5 +151,6 @@ int main(void) {
     test_extractps_to_reg();
     test_extractps_to_mem();
     test_extractps_lane0();
+    test_insertps_extractps_immediate_boundaries();
     TEST_END();
 }

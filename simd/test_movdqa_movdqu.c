@@ -143,6 +143,38 @@ static void test_movdqa_all_ones(void) {
         "movdqa all ones: data mismatch");
 }
 
+static void test_movdqu_all_unaligned_offsets_and_store_guards(void) {
+    uint8_t load_buf[64] __attribute__((aligned(16)));
+    uint8_t store_buf[64] __attribute__((aligned(16)));
+    xmm_t pattern, result;
+    for (int i = 0; i < 16; i++) pattern.u8[i] = (uint8_t)(i * 17 + 3);
+
+    for (int offset = 1; offset < 16; offset++) {
+        memset(load_buf, 0xcc, sizeof(load_buf));
+        memcpy(load_buf + offset, &pattern, sizeof(pattern));
+        __asm__ volatile (
+            "movdqu (%1), %%xmm0\n\t"
+            "movdqa %%xmm0, %0"
+            : "=m"(result) : "r"(load_buf + offset) : "xmm0", "memory"
+        );
+        TEST_ASSERT(memcmp(&result, &pattern, sizeof(pattern)) == 0,
+                    "movdqu load offset %d crossing alignment boundary", offset);
+
+        memset(store_buf, 0x5a, sizeof(store_buf));
+        __asm__ volatile (
+            "movdqa %1, %%xmm0\n\t"
+            "movdqu %%xmm0, (%0)"
+            : : "r"(store_buf + offset), "m"(pattern) : "xmm0", "memory"
+        );
+        int data_ok = memcmp(store_buf + offset, &pattern, sizeof(pattern)) == 0;
+        int guards_ok = 1;
+        for (int i = 0; i < offset; i++) if (store_buf[i] != 0x5a) guards_ok = 0;
+        for (int i = offset + 16; i < 64; i++) if (store_buf[i] != 0x5a) guards_ok = 0;
+        TEST_ASSERT(data_ok && guards_ok,
+                    "movdqu store offset %d writes exactly 16 bytes", offset);
+    }
+}
+
 int main(void) {
     TEST_START("MOVDQA/MOVDQU instructions");
     test_movdqa_xmm_to_xmm();
@@ -153,5 +185,6 @@ int main(void) {
     test_movdqu_store_unaligned();
     test_movdqa_all_zeros();
     test_movdqa_all_ones();
+    test_movdqu_all_unaligned_offsets_and_store_guards();
     TEST_END();
 }

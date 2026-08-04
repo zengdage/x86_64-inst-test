@@ -16,7 +16,19 @@
 #include "../common.h"
 #include <signal.h>
 #include <setjmp.h>
+#include <unistd.h>
+#include <sys/syscall.h>
+#include <asm/prctl.h>
 
+static uint64_t kernel_segment_base(int code)
+{
+    unsigned long value = 0;
+    long rc = syscall(SYS_arch_prctl, code, &value);
+    TEST_ASSERT(rc == 0, "arch_prctl(%d) succeeds", code);
+    return (uint64_t)value;
+}
+
+#if ENABLE_RUNTIME_CPU_CHECKS
 static sigjmp_buf jmp_env;
 static volatile int got_sigill = 0;
 
@@ -65,11 +77,16 @@ static int fsgsbase_enabled(void)
     sigaction(SIGILL, &old_sa, NULL);
     return !got_sigill;
 }
+#else
+#define has_fsgsbase_cpuid() 1
+#define fsgsbase_enabled() 1
+#endif
 
 /* Test RDFSBASE - read FS base (32-bit) */
 static void test_rdfsbase32(void)
 {
     uint32_t fs_base32;
+    uint64_t fs_base64;
 
     TEST_START("RDFSBASE - 32-bit");
 
@@ -77,9 +94,12 @@ static void test_rdfsbase32(void)
         "rdfsbase %0"
         : "=r"(fs_base32)
     );
+    __asm__ volatile ("rdfsbase %0" : "=r"(fs_base64));
 
     printf("  FS base (32-bit): 0x%08X\n", fs_base32);
-    TEST_ASSERT(1, "RDFSBASE 32-bit executed successfully");
+    TEST_ASSERT(fs_base32 == (uint32_t)fs_base64,
+                "RDFSBASE r32 returns low 32 bits: %08x vs %08x",
+                fs_base32, (uint32_t)fs_base64);
 }
 
 /* Test RDFSBASE - read FS base (64-bit) */
@@ -95,8 +115,10 @@ static void test_rdfsbase64(void)
     );
 
     printf("  FS base (64-bit): 0x%016" PRIX64 "\n", fs_base64);
-    /* On Linux, FS base is typically non-zero (used for TLS) */
-    TEST_ASSERT(fs_base64 != 0, "FS base should be non-zero (TLS pointer), got 0x%" PRIX64, fs_base64);
+    uint64_t kernel_fs = kernel_segment_base(ARCH_GET_FS);
+    TEST_ASSERT(fs_base64 == kernel_fs,
+                "RDFSBASE matches ARCH_GET_FS: 0x%" PRIX64 " vs 0x%" PRIX64,
+                fs_base64, kernel_fs);
 }
 
 /* Test RDGSBASE - read GS base (64-bit) */
@@ -112,8 +134,10 @@ static void test_rdgsbase64(void)
     );
 
     printf("  GS base (64-bit): 0x%016" PRIX64 "\n", gs_base64);
-    /* GS base may be zero in user space on Linux */
-    TEST_ASSERT(1, "RDGSBASE 64-bit executed successfully");
+    uint64_t kernel_gs = kernel_segment_base(ARCH_GET_GS);
+    TEST_ASSERT(gs_base64 == kernel_gs,
+                "RDGSBASE matches ARCH_GET_GS: 0x%" PRIX64 " vs 0x%" PRIX64,
+                gs_base64, kernel_gs);
 }
 
 /* Test WRFSBASE/RDFSBASE round-trip */

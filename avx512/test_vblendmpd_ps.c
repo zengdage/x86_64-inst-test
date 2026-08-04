@@ -98,5 +98,36 @@ int main(void) {
         TEST_ASSERT(ok, "vblendmps ymm k=FF: all from b");
     }
 
+    /* ZMM merge/zero forms and mask-width boundaries. */
+    {
+        __attribute__((aligned(64))) float a[16], b[16], r[16];
+        for (int i = 0; i < 16; i++) { a[i] = (float)(i + 1); b[i] = (float)(100 + i); }
+        const uint64_t masks[] = {0, 0xffff, 0x0001, 0x8000};
+        for (unsigned m = 0; m < sizeof(masks)/sizeof(masks[0]); m++) {
+            uint64_t mask = masks[m];
+            __asm__ volatile(
+                "kmovq %3,%%k1\n\tvmovaps %1,%%zmm0\n\tvmovaps %2,%%zmm1\n\t"
+                "vblendmps %%zmm1,%%zmm0,%%zmm2%{%%k1%}\n\tvmovaps %%zmm2,%0"
+                : "=m"(r) : "m"(a), "m"(b), "r"(mask) : "zmm0", "zmm1", "zmm2", "k1");
+            for (int i = 0; i < 16; i++) TEST_ASSERT(r[i] == (((mask >> i)&1) ? b[i] : a[i]), "vblendmps zmm merge mask 0x%04llx lane %d", (unsigned long long)mask, i);
+            __asm__ volatile(
+                "kmovq %3,%%k1\n\tvmovaps %1,%%zmm0\n\tvmovaps %2,%%zmm1\n\t"
+                "vblendmps %%zmm1,%%zmm0,%%zmm2%{%%k1%}%{z%}\n\tvmovaps %%zmm2,%0"
+                : "=m"(r) : "m"(a), "m"(b), "r"(mask) : "zmm0", "zmm1", "zmm2", "k1");
+            for (int i = 0; i < 16; i++) TEST_ASSERT(r[i] == (((mask >> i)&1) ? b[i] : 0.0f), "vblendmps zmm zero mask 0x%04llx lane %d", (unsigned long long)mask, i);
+        }
+    }
+
+    {
+        __attribute__((aligned(64))) double a[8], b[8], r[8];
+        for (int i = 0; i < 8; i++) { a[i] = (double)(i + 1); b[i] = (double)(200 + i); }
+        uint64_t mask = 0x81;
+        __asm__ volatile(
+            "kmovq %3,%%k1\n\tvmovapd %1,%%zmm0\n\tvmovapd %2,%%zmm1\n\t"
+            "vblendmpd %%zmm1,%%zmm0,%%zmm2%{%%k1%}\n\tvmovapd %%zmm2,%0"
+            : "=m"(r) : "m"(a), "m"(b), "r"(mask) : "zmm0", "zmm1", "zmm2", "k1");
+        for (int i = 0; i < 8; i++) TEST_ASSERT(r[i] == ((i == 0 || i == 7) ? b[i] : a[i]), "vblendmpd zmm low/high lane %d", i);
+    }
+
     TEST_END();
 }

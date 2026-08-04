@@ -42,6 +42,8 @@ static void test_sha256rnds2_basic(void) {
 
     TEST_ASSERT(memcmp(&result, &cdgh, 16) != 0,
                 "sha256rnds2: output differs from input state");
+    const xmm_t expected = { .u32 = {0xa448e70d,0xc0b83fca,0x48737976,0x6c2896a9} };
+    TEST_ASSERT(memcmp(&result, &expected, 16) == 0, "sha256rnds2 golden output");
 
     /* Verify determinism */
     xmm_t result2;
@@ -143,6 +145,8 @@ static void test_sha256msg1(void) {
 
     TEST_ASSERT(memcmp(&result, &w0_3, 16) != 0,
                 "sha256msg1: output differs from input");
+    const xmm_t expected = { .u32 = {0x495f4a6e,0xd8131b44,0x6522778d,0x76d1d5c9} };
+    TEST_ASSERT(memcmp(&result, &expected, 16) == 0, "sha256msg1 golden output");
 
     /* Determinism */
     xmm_t result2;
@@ -206,6 +210,8 @@ static void test_sha256msg2(void) {
 
     TEST_ASSERT(memcmp(&result, &a, 16) != 0,
                 "sha256msg2: output differs from input");
+    const xmm_t expected = { .u32 = {0x12012344,0xf01f0112,0xc5bbd6b1,0xe7fc64ed} };
+    TEST_ASSERT(memcmp(&result, &expected, 16) == 0, "sha256msg2 golden output");
 
     /* Determinism */
     xmm_t result2;

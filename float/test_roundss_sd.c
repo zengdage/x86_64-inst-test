@@ -374,6 +374,94 @@ static void test_roundsd_mem(void) {
     TEST_ASSERT(result.f64[1] == 100.0, "roundsd mem upper preserved");
 }
 
+static void test_scalar_round_mxcsr_and_exceptions(void) {
+    xmm_t src1 = { .f32 = {99.0f, 11.0f, 22.0f, 33.0f} };
+    xmm_t src2 = { .f32 = {1.9f, 1.0f, 2.0f, 3.0f} };
+    xmm_t r;
+    uint32_t saved, csr;
+    __asm__ volatile("stmxcsr %0" : "=m"(saved));
+    const float expected[4] = {2.0f, 1.0f, 2.0f, 1.0f};
+    for (uint32_t mode = 0; mode < 4; mode++) {
+        csr = (saved & ~(UINT32_C(3) << 13)) | (mode << 13);
+        __asm__ volatile("ldmxcsr %0" : : "m"(csr));
+        __asm__ volatile("movaps %1,%%xmm0\n\tmovaps %2,%%xmm1\n\troundss $4,%%xmm1,%%xmm0\n\tmovaps %%xmm0,%0"
+            : "=m"(r) : "m"(src1), "m"(src2) : "xmm0", "xmm1");
+        TEST_ASSERT(r.f32[0] == expected[mode], "roundss MXCSR mode %u", mode);
+        TEST_ASSERT(r.f32[1] == 11.0f && r.f32[2] == 22.0f && r.f32[3] == 33.0f, "roundss upper lanes preserved mode %u", mode);
+    }
+
+    csr = saved & ~UINT32_C(0x3f);
+    __asm__ volatile("ldmxcsr %0" : : "m"(csr));
+    __asm__ volatile("movaps %0,%%xmm0\n\troundss $0,%%xmm0,%%xmm0" : : "m"(src2) : "xmm0");
+    __asm__ volatile("stmxcsr %0" : "=m"(csr));
+    TEST_ASSERT(csr & (1u << 5), "roundss unsuppressed precision flag");
+    csr = saved & ~UINT32_C(0x3f);
+    __asm__ volatile("ldmxcsr %0" : : "m"(csr));
+    __asm__ volatile("movaps %0,%%xmm0\n\troundss $8,%%xmm0,%%xmm0" : : "m"(src2) : "xmm0");
+    __asm__ volatile("stmxcsr %0" : "=m"(csr));
+    TEST_ASSERT(!(csr & (1u << 5)), "roundss imm bit3 suppresses precision flag");
+
+    src2.u32[0] = UINT32_C(0x7f812345);
+    csr = saved & ~UINT32_C(0x3f);
+    __asm__ volatile("ldmxcsr %0" : : "m"(csr));
+    __asm__ volatile(
+        "movaps %1, %%xmm0\n\t"
+        "roundss $8, %2, %%xmm0\n\t"
+        "movaps %%xmm0, %0"
+        : "=m"(r) : "m"(src1), "m"(src2) : "xmm0"
+    );
+    __asm__ volatile("stmxcsr %0" : "=m"(csr));
+    TEST_ASSERT(r.u32[0] == UINT32_C(0x7fc12345),
+                "roundss quiets SNaN with exact payload");
+    TEST_ASSERT(r.u32[1] == src1.u32[1] && r.u32[2] == src1.u32[2] &&
+                r.u32[3] == src1.u32[3], "roundss SNaN preserves source1 upper lanes");
+    TEST_ASSERT(csr & 1u, "roundss SNaN sets invalid despite imm bit3");
+
+    xmm_t sd1 = { .u64 = {UINT64_C(0xdeadbeefdeadbeef),
+                           UINT64_C(0xfff8123456789abc)} };
+    xmm_t sd2 = { .f64 = {1.9, 0.0} };
+    const double expected_sd[4] = {2.0, 1.0, 2.0, 1.0};
+    for (uint32_t mode = 0; mode < 4; mode++) {
+        csr = (saved & ~(UINT32_C(3) << 13)) | (mode << 13);
+        __asm__ volatile("ldmxcsr %0" : : "m"(csr));
+        __asm__ volatile(
+            "movapd %1, %%xmm0\n\t"
+            "roundsd $4, %2, %%xmm0\n\t"
+            "movapd %%xmm0, %0"
+            : "=m"(r) : "m"(sd1), "m"(sd2) : "xmm0"
+        );
+        TEST_ASSERT(r.f64[0] == expected_sd[mode], "roundsd MXCSR mode %u", mode);
+        TEST_ASSERT(r.u64[1] == sd1.u64[1], "roundsd upper lane mode %u", mode);
+    }
+
+    csr = saved & ~UINT32_C(0x3f);
+    __asm__ volatile("ldmxcsr %0" : : "m"(csr));
+    __asm__ volatile("roundsd $0, %0, %%xmm0" : : "m"(sd2) : "xmm0");
+    __asm__ volatile("stmxcsr %0" : "=m"(csr));
+    TEST_ASSERT(csr & (1u << 5), "roundsd unsuppressed precision flag");
+    csr = saved & ~UINT32_C(0x3f);
+    __asm__ volatile("ldmxcsr %0" : : "m"(csr));
+    __asm__ volatile("roundsd $8, %0, %%xmm0" : : "m"(sd2) : "xmm0");
+    __asm__ volatile("stmxcsr %0" : "=m"(csr));
+    TEST_ASSERT(!(csr & (1u << 5)), "roundsd imm bit3 suppresses precision flag");
+
+    sd2.u64[0] = UINT64_C(0x7ff0000000001234);
+    csr = saved & ~UINT32_C(0x3f);
+    __asm__ volatile("ldmxcsr %0" : : "m"(csr));
+    __asm__ volatile(
+        "movapd %1, %%xmm0\n\t"
+        "roundsd $8, %2, %%xmm0\n\t"
+        "movapd %%xmm0, %0"
+        : "=m"(r) : "m"(sd1), "m"(sd2) : "xmm0"
+    );
+    __asm__ volatile("stmxcsr %0" : "=m"(csr));
+    TEST_ASSERT(r.u64[0] == UINT64_C(0x7ff8000000001234),
+                "roundsd quiets SNaN with exact payload");
+    TEST_ASSERT(r.u64[1] == sd1.u64[1], "roundsd SNaN preserves source1 upper lane");
+    TEST_ASSERT(csr & 1u, "roundsd SNaN sets invalid despite imm bit3");
+    __asm__ volatile("ldmxcsr %0" : : "m"(saved));
+}
+
 int main(void) {
     TEST_START("ROUNDSS/ROUNDSD instructions (SSE4.1)");
     test_roundss_nearest();
@@ -388,5 +476,6 @@ int main(void) {
     test_roundsd_trunc();
     test_roundsd_special();
     test_roundsd_mem();
+    test_scalar_round_mxcsr_and_exceptions();
     TEST_END();
 }

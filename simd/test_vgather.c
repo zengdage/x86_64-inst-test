@@ -14,6 +14,8 @@
  * Note: Do not use static linking.
  */
 #include "../common.h"
+#include <sys/mman.h>
+#include <unistd.h>
 
 static void test_vgatherdps_128(void) {
     float table[16] = {0,10,20,30,40,50,60,70,80,90,100,110,120,130,140,150};
@@ -116,6 +118,46 @@ static void test_vgatherqpd_128(void) {
     TEST_ASSERT(dst.f64[1] == 5.0, "vgatherqpd [1]: expected 5.0, got %f", dst.f64[1]);
 }
 
+static void test_vgather_boundaries(void) {
+    float table[24];
+    for (int i = 0; i < 24; i++) table[i] = (float)(1000 + i);
+    xmm_t indices = { .i32 = {-2, 0, 0, 3} };
+    xmm_t mask = { .u32 = {0x80000000u, 0x80000000u, 0x80000000u, 0x80000000u} };
+    xmm_t dst, mask_after;
+    float *base = &table[8];
+    __asm__ volatile (
+        "vmovdqa %3,%%xmm1\n\tvmovdqa %4,%%xmm2\n\tvxorps %%xmm0,%%xmm0,%%xmm0\n\t"
+        "vgatherdps %%xmm2,(%2,%%xmm1,4),%%xmm0\n\tvmovaps %%xmm0,%0\n\tvmovdqa %%xmm2,%1"
+        : "=m"(dst), "=m"(mask_after) : "r"(base), "m"(indices), "m"(mask)
+        : "xmm0", "xmm1", "xmm2", "memory");
+    TEST_ASSERT(dst.f32[0] == table[6] && dst.f32[1] == table[8] && dst.f32[2] == table[8] && dst.f32[3] == table[11],
+        "vgatherdps negative and repeated indices");
+    for (int i = 0; i < 4; i++) TEST_ASSERT(mask_after.u32[i] == 0, "vgatherdps clears successful mask lane %d", i);
+
+    indices.i32[0] = 0; indices.i32[1] = 4; indices.i32[2] = 8; indices.i32[3] = 12;
+    __asm__ volatile (
+        "vmovdqa %2,%%xmm1\n\tvmovdqa %3,%%xmm2\n\tvxorps %%xmm0,%%xmm0,%%xmm0\n\t"
+        "vgatherdps %%xmm2,(%1,%%xmm1,1),%%xmm0\n\tvmovaps %%xmm0,%0"
+        : "=m"(dst) : "r"(table), "m"(indices), "m"(mask) : "xmm0", "xmm1", "xmm2", "memory");
+    for (int i = 0; i < 4; i++) TEST_ASSERT(dst.f32[i] == table[i], "vgatherdps scale=1 lane %d", i);
+
+    long page_size = sysconf(_SC_PAGESIZE);
+    void *guard = mmap(NULL, (size_t)page_size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    TEST_ASSERT(guard != MAP_FAILED, "vgather guard page allocation");
+    if (guard != MAP_FAILED) {
+        xmm_t zero_mask = { .u64 = {0, 0} };
+        xmm_t initial = { .u32 = {0x11111111u, 0x22222222u, 0x33333333u, 0x44444444u} };
+        indices.u32[0] = indices.u32[1] = indices.u32[2] = indices.u32[3] = 0;
+        __asm__ volatile (
+            "vmovaps %4,%%xmm0\n\tvmovdqa %2,%%xmm1\n\tvmovdqa %3,%%xmm2\n\t"
+            "vgatherdps %%xmm2,(%1,%%xmm1,4),%%xmm0\n\tvmovaps %%xmm0,%0"
+            : "=m"(dst) : "r"(guard), "m"(indices), "m"(zero_mask), "m"(initial)
+            : "xmm0", "xmm1", "xmm2", "memory");
+        TEST_ASSERT(memcmp(&dst, &initial, sizeof(dst)) == 0, "vgatherdps empty mask suppresses invalid-address fault");
+        munmap(guard, (size_t)page_size);
+    }
+}
+
 int main(void) {
     TEST_START("VGATHERDPS/VGATHERDPD/VGATHERQPS/VGATHERQPD instructions (AVX2)");
     test_vgatherdps_128();
@@ -123,6 +165,7 @@ int main(void) {
     test_vgatherdpd_128();
     test_vgatherqps_128();
     test_vgatherqpd_128();
+    test_vgather_boundaries();
     __asm__ volatile ("vzeroupper");
     TEST_END();
 }

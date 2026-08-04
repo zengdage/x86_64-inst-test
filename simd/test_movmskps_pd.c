@@ -123,6 +123,40 @@ static void test_movmskpd_neg_zero(void) {
     TEST_ASSERT(result == 1, "movmskpd -0.0: expected 1, got %d", result);
 }
 
+static void test_movmsk_special_bits_and_zero_extension(void) {
+    xmm_t ps = { .u32 = {
+        UINT32_C(0x80000001), /* negative minimum subnormal */
+        UINT32_C(0x7f800000), /* +Inf */
+        UINT32_C(0x7fc12345), /* positive QNaN */
+        UINT32_C(0xffc54321)  /* negative QNaN */
+    } };
+    xmm_t pd = { .u64 = {
+        UINT64_C(0x7ff0000000000001), /* positive SNaN */
+        UINT64_C(0xfff0000000000000)  /* -Inf */
+    } };
+    uint64_t result;
+
+    __asm__ volatile (
+        "movq $-1, %%rax\n\t"
+        "movdqa %1, %%xmm0\n\t"
+        "movmskps %%xmm0, %%eax\n\t"
+        "movq %%rax, %0"
+        : "=r"(result) : "m"(ps) : "rax", "xmm0"
+    );
+    TEST_ASSERT(result == UINT64_C(0x0000000000000009),
+                "movmskps special sign bits and eax zero extension: %#" PRIx64, result);
+
+    __asm__ volatile (
+        "movq $-1, %%rax\n\t"
+        "movdqa %1, %%xmm0\n\t"
+        "movmskpd %%xmm0, %%eax\n\t"
+        "movq %%rax, %0"
+        : "=r"(result) : "m"(pd) : "rax", "xmm0"
+    );
+    TEST_ASSERT(result == UINT64_C(0x0000000000000002),
+                "movmskpd NaN/Inf sign bits and eax zero extension: %#" PRIx64, result);
+}
+
 int main(void) {
     TEST_START("MOVMSKPS/MOVMSKPD instructions");
     test_movmskps_all_positive();
@@ -133,5 +167,6 @@ int main(void) {
     test_movmskpd_all_negative();
     test_movmskpd_mixed();
     test_movmskpd_neg_zero();
+    test_movmsk_special_bits_and_zero_extension();
     TEST_END();
 }

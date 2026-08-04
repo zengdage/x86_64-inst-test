@@ -133,11 +133,48 @@ static void test_mul_mem(void) {
     TEST_ASSERT(lo == 42 && hi == 0, "mulq mem: 6*7 expected 42");
 }
 
+static void test_mul_64bit_boundaries(void) {
+    uint64_t lo, hi, flags;
+
+    __asm__ volatile (
+        "movq $-1, %%rax\n\t"
+        "movq $-1, %%rcx\n\t"
+        "mulq %%rcx\n\t"
+        "movq %%rax, %0\n\t"
+        "movq %%rdx, %1\n\t"
+        "pushfq\n\t"
+        "popq %2"
+        : "=r"(lo), "=r"(hi), "=r"(flags)
+        :
+        : "rax", "rcx", "rdx", "cc"
+    );
+    TEST_ASSERT(lo == 1 && hi == UINT64_MAX - 1,
+                "mulq UINT64_MAX squared: full 128-bit result");
+    TEST_ASSERT((flags & (CF_FLAG | OF_FLAG)) == (CF_FLAG | OF_FLAG),
+                "mulq UINT64_MAX squared: CF and OF set");
+
+    __asm__ volatile (
+        "movq $-1, %%rax\n\t"
+        "movq $1, %%rcx\n\t"
+        "mulq %%rcx\n\t"
+        "movq %%rax, %0\n\t"
+        "movq %%rdx, %1\n\t"
+        "pushfq\n\t"
+        "popq %2"
+        : "=r"(lo), "=r"(hi), "=r"(flags)
+        :
+        : "rax", "rcx", "rdx", "cc"
+    );
+    TEST_ASSERT(lo == UINT64_MAX && hi == 0, "mulq UINT64_MAX*1 boundary");
+    TEST_ASSERT(!(flags & (CF_FLAG | OF_FLAG)), "mulq UINT64_MAX*1: CF and OF clear");
+}
+
 int main(void) {
     TEST_START("MUL instruction");
     test_mul_8bit();
     test_mul_32bit();
     test_mul_64bit();
     test_mul_mem();
+    test_mul_64bit_boundaries();
     TEST_END();
 }

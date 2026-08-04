@@ -151,6 +151,40 @@ static void test_movups_xmm_to_xmm(void) {
     }
 }
 
+static void test_movups_movupd_all_unaligned_offsets(void) {
+    uint8_t load_buf[64] __attribute__((aligned(16)));
+    uint8_t store_buf[64] __attribute__((aligned(16)));
+    xmm_t pattern = { .u64 = {
+        UINT64_C(0x7fc1234580000000), UINT64_C(0x00000001fff00000)
+    } };
+    xmm_t result;
+
+#define TEST_UNALIGNED_MOVE(LOAD, STORE, NAME, OFFSET) do {                  \
+        memset(load_buf, 0xcc, sizeof(load_buf));                            \
+        memcpy(load_buf + (OFFSET), &pattern, sizeof(pattern));              \
+        __asm__ volatile (LOAD " (%1), %%xmm0\n\t" "movaps %%xmm0, %0"  \
+                          : "=m"(result) : "r"(load_buf + (OFFSET))         \
+                          : "xmm0", "memory");                            \
+        TEST_ASSERT(memcmp(&result, &pattern, sizeof(pattern)) == 0,         \
+                    NAME " load offset %d preserves exact bits", (OFFSET)); \
+        memset(store_buf, 0x5a, sizeof(store_buf));                          \
+        __asm__ volatile ("movaps %1, %%xmm0\n\t" STORE " %%xmm0, (%0)" \
+                          : : "r"(store_buf + (OFFSET)), "m"(pattern)       \
+                          : "xmm0", "memory");                            \
+        int ok = memcmp(store_buf + (OFFSET), &pattern, sizeof(pattern)) == 0; \
+        for (int i = 0; i < (OFFSET); i++) if (store_buf[i] != 0x5a) ok = 0; \
+        for (int i = (OFFSET) + 16; i < 64; i++)                             \
+            if (store_buf[i] != 0x5a) ok = 0;                               \
+        TEST_ASSERT(ok, NAME " store offset %d writes exactly 16 bytes", (OFFSET)); \
+    } while (0)
+
+    for (int offset = 1; offset < 16; offset++) {
+        TEST_UNALIGNED_MOVE("movups", "movups", "MOVUPS", offset);
+        TEST_UNALIGNED_MOVE("movupd", "movupd", "MOVUPD", offset);
+    }
+#undef TEST_UNALIGNED_MOVE
+}
+
 int main(void) {
     TEST_START("MOVAPS/MOVUPS/MOVAPD/MOVUPD instructions");
     test_movaps_xmm_to_xmm();
@@ -161,5 +195,6 @@ int main(void) {
     test_movapd_mem_roundtrip();
     test_movupd_unaligned();
     test_movups_xmm_to_xmm();
+    test_movups_movupd_all_unaligned_offsets();
     TEST_END();
 }

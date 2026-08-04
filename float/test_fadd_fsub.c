@@ -241,6 +241,56 @@ static void test_denormal(void) {
     TEST_ASSERT(result == DBL_MIN, "fadd denormal+denormal = DBL_MIN");
 }
 
+static void test_fadd_fsub_status_precision_and_signed_zero(void) {
+    double pos_inf = INFINITY, neg_inf = -INFINITY, result;
+    uint16_t status;
+
+    __asm__ volatile (
+        "fnclex\n\tfldl %2\n\tfaddl %3\n\tfstpl %0\n\tfnstsw %1"
+        : "=m"(result), "=m"(status) : "m"(pos_inf), "m"(neg_inf)
+        : "memory"
+    );
+    TEST_ASSERT(isnan(result), "fadd +inf + -inf produces NaN");
+    TEST_ASSERT(status & 1, "fadd opposite infinities sets invalid status");
+
+    __asm__ volatile (
+        "fnclex\n\tfldl %2\n\tfsubl %3\n\tfstpl %0\n\tfnstsw %1"
+        : "=m"(result), "=m"(status) : "m"(pos_inf), "m"(pos_inf)
+        : "memory"
+    );
+    TEST_ASSERT(isnan(result), "fsub infinity minus itself produces NaN");
+    TEST_ASSERT(status & 1, "fsub equal infinities sets invalid status");
+
+    double one = 1.0, tiny = 0x1p-65;
+    __asm__ volatile (
+        "fnclex\n\tfldl %2\n\tfaddl %3\n\tfstpl %0\n\tfnstsw %1"
+        : "=m"(result), "=m"(status) : "m"(one), "m"(tiny)
+        : "memory"
+    );
+    TEST_ASSERT(result == 1.0, "fadd value below extended-precision half ULP rounds to one");
+    TEST_ASSERT(status & (1u << 5), "fadd inexact result sets precision status");
+
+    uint16_t saved_cw, cw;
+    double pos_zero = 0.0, neg_zero = -0.0;
+    uint64_t result_bits;
+    __asm__ volatile("fnstcw %0" : "=m"(saved_cw));
+    cw = (uint16_t)((saved_cw & ~UINT16_C(0x0c00)) | UINT16_C(0x0400));
+    __asm__ volatile("fldcw %0" : : "m"(cw));
+    __asm__ volatile("fldl %1\n\tfaddl %2\n\tfstpl %0"
+        : "=m"(result) : "m"(pos_zero), "m"(neg_zero));
+    memcpy(&result_bits, &result, sizeof(result_bits));
+    TEST_ASSERT(result_bits == UINT64_C(0x8000000000000000),
+                "fadd exact opposite zeros rounds to -0 in round-down mode");
+
+    cw = (uint16_t)((saved_cw & ~UINT16_C(0x0c00)) | UINT16_C(0x0800));
+    __asm__ volatile("fldcw %0" : : "m"(cw));
+    __asm__ volatile("fldl %1\n\tfaddl %2\n\tfstpl %0"
+        : "=m"(result) : "m"(pos_zero), "m"(neg_zero));
+    memcpy(&result_bits, &result, sizeof(result_bits));
+    TEST_ASSERT(result_bits == 0, "fadd exact opposite zeros rounds to +0 in round-up mode");
+    __asm__ volatile("fldcw %0\n\tfnclex" : : "m"(saved_cw));
+}
+
 int main(void) {
     TEST_START("FADD/FADDP/FSUB/FSUBP/FSUBR/FSUBRP instructions");
     test_fadd_mem();
@@ -250,5 +300,6 @@ int main(void) {
     test_fsubr();
     test_fsubrp();
     test_denormal();
+    test_fadd_fsub_status_precision_and_signed_zero();
     TEST_END();
 }

@@ -109,10 +109,48 @@ static void test_or_sizes(void) {
     TEST_ASSERT(r16 == 0xFFFF, "orw 0xFF00|0x00FF expected 0xFFFF");
 }
 
+static void test_or_width_memory_immediate_and_flags(void) {
+    uint8_t m8 = 0;
+    uint16_t m16 = 0;
+    uint32_t m32 = 0;
+    uint64_t m64 = 0;
+    uint64_t result, flags;
+
+    __asm__ volatile ("orb $0x80, %0" : "+m"(m8) : : "cc");
+    __asm__ volatile ("orw $0x8001, %0" : "+m"(m16) : : "cc");
+    __asm__ volatile ("orl $0x80000001, %0" : "+m"(m32) : : "cc");
+    __asm__ volatile (
+        "orq $-2147483648, %0\n\t"
+        "pushfq\n\tpopq %1"
+        : "+m"(m64), "=r"(flags) : : "cc"
+    );
+    TEST_ASSERT(m8 == UINT8_C(0x80), "orb memory boundary: %#x", m8);
+    TEST_ASSERT(m16 == UINT16_C(0x8001), "orw memory boundary: %#x", m16);
+    TEST_ASSERT(m32 == UINT32_C(0x80000001), "orl memory boundary: %#x", m32);
+    TEST_ASSERT(m64 == UINT64_C(0xffffffff80000000),
+                "orq sign-extended imm32 boundary: %#" PRIx64, m64);
+    TEST_ASSERT(flags & SF_FLAG, "orq negative result: SF set");
+    TEST_ASSERT(!(flags & ZF_FLAG), "orq nonzero result: ZF clear");
+    TEST_ASSERT(flags & PF_FLAG, "orq low byte zero: PF set");
+    TEST_ASSERT(!(flags & CF_FLAG), "orq clears CF");
+    TEST_ASSERT(!(flags & OF_FLAG), "orq clears OF");
+
+    __asm__ volatile (
+        "movq $-1, %%rax\n\t"
+        "movl $1, %%eax\n\t"
+        "orl $0x80000000, %%eax\n\t"
+        "movq %%rax, %0"
+        : "=r"(result) : : "rax", "cc"
+    );
+    TEST_ASSERT(result == UINT64_C(0x0000000080000001),
+                "orl writes eax and clears RAX high half: %#" PRIx64, result);
+}
+
 int main(void) {
     TEST_START("OR instruction");
     test_or_reg_reg();
     test_or_reg_imm();
     test_or_sizes();
+    test_or_width_memory_immediate_and_flags();
     TEST_END();
 }

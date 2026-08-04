@@ -24,11 +24,15 @@ typedef union {
     double f64[8];
 } zmm_t __attribute__((aligned(64)));
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx2(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile ("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
     return (ebx >> 5) & 1;
 }
+#else
+#define check_avx2() 1
+#endif
 
 int main(void) {
     if (!check_avx2()) {
@@ -90,6 +94,13 @@ int main(void) {
     );
     TEST_ASSERT(dst.i16[0] == 32767, "VPHADDSW sat pos: %d", dst.i16[0]);
     TEST_ASSERT(dst.i16[4] == 32767, "VPHADDSW sat pos b: %d", dst.i16[4]);
+    for (int lane = 0; lane < 2; lane++) {
+        int base = lane * 8;
+        int16_t expected = lane == 0 ? INT16_MAX : INT16_MIN;
+        for (int i = 0; i < 8; i++)
+            TEST_ASSERT(dst.i16[base+i] == expected,
+                        "VPHADDSW saturation lane %d element %d", lane, i);
+    }
 
     /* VPHSUBD ymm: horizontal subtract adjacent dwords */
     for (int i = 0; i < 8; i++) a.i32[i] = (int)(i * 10 + 5);
@@ -101,8 +112,13 @@ int main(void) {
         "vmovdqu %%ymm2, %0"
         : "=m"(dst) : "m"(a), "m"(b) : "ymm0","ymm1","ymm2"
     );
-    TEST_ASSERT(dst.i32[0] == a.i32[0]-a.i32[1], "VPHSUBD lo[0]: %d", dst.i32[0]);
-    TEST_ASSERT(dst.i32[2] == b.i32[0]-b.i32[1], "VPHSUBD lo[2]: %d", dst.i32[2]);
+    for (int lane = 0; lane < 2; lane++) {
+        int src_base = lane * 4, dst_base = lane * 4;
+        TEST_ASSERT(dst.i32[dst_base] == a.i32[src_base]-a.i32[src_base+1], "VPHSUBD a pair0 lane %d", lane);
+        TEST_ASSERT(dst.i32[dst_base+1] == a.i32[src_base+2]-a.i32[src_base+3], "VPHSUBD a pair1 lane %d", lane);
+        TEST_ASSERT(dst.i32[dst_base+2] == b.i32[src_base]-b.i32[src_base+1], "VPHSUBD b pair0 lane %d", lane);
+        TEST_ASSERT(dst.i32[dst_base+3] == b.i32[src_base+2]-b.i32[src_base+3], "VPHSUBD b pair1 lane %d", lane);
+    }
 
     /* VPHSUBW ymm: horizontal subtract adjacent words */
     for (int i = 0; i < 16; i++) a.i16[i] = (int16_t)(i * 5 + 10);
@@ -114,13 +130,19 @@ int main(void) {
         "vmovdqu %%ymm2, %0"
         : "=m"(dst) : "m"(a), "m"(b) : "ymm0","ymm1","ymm2"
     );
-    for (int j = 0; j < 4; j++)
-        TEST_ASSERT(dst.i16[j] == (int16_t)(a.i16[j*2]-a.i16[j*2+1]),
-            "VPHSUBW lo a[%d]: %d", j, dst.i16[j]);
+    for (int lane = 0; lane < 2; lane++) {
+        int src_base = lane * 8, dst_base = lane * 8;
+        for (int j = 0; j < 4; j++) {
+            TEST_ASSERT(dst.i16[dst_base+j] == (int16_t)(a.i16[src_base+j*2]-a.i16[src_base+j*2+1]),
+                        "VPHSUBW a lane %d pair %d", lane, j);
+            TEST_ASSERT(dst.i16[dst_base+4+j] == (int16_t)(b.i16[src_base+j*2]-b.i16[src_base+j*2+1]),
+                        "VPHSUBW b lane %d pair %d", lane, j);
+        }
+    }
 
     /* VPHSUBSW ymm: horizontal subtract with saturation */
     for (int i = 0; i < 16; i++) a.i16[i] = (int16_t)((i % 2 == 0) ? -30000 : 30000);
-    for (int i = 0; i < 16; i++) b.i16[i] = (int16_t)(i < 8 ? 20000 : -20000);
+    for (int i = 0; i < 16; i++) b.i16[i] = (int16_t)((i % 2 == 0) ? 30000 : -30000);
     __asm__ volatile (
         "vmovdqu %1, %%ymm0\n\t"
         "vmovdqu %2, %%ymm1\n\t"
@@ -128,7 +150,13 @@ int main(void) {
         "vmovdqu %%ymm2, %0"
         : "=m"(dst) : "m"(a), "m"(b) : "ymm0","ymm1","ymm2"
     );
-    TEST_ASSERT(dst.i16[0] == -32768, "VPHSUBSW sat neg: %d", dst.i16[0]);
+    for (int lane = 0; lane < 2; lane++) {
+        int base = lane * 8;
+        for (int i = 0; i < 4; i++) {
+            TEST_ASSERT(dst.i16[base+i] == INT16_MIN, "VPHSUBSW negative saturation lane %d pair %d", lane, i);
+            TEST_ASSERT(dst.i16[base+4+i] == INT16_MAX, "VPHSUBSW positive saturation lane %d pair %d", lane, i);
+        }
+    }
 
     TEST_END();
 }

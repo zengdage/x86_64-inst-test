@@ -138,6 +138,29 @@ static void test_adc_sizes(void) {
     TEST_ASSERT(r32 == 151, "adcl 100+50+1 expected 151, got %u", r32);
 }
 
+static void test_adc_complete_flags_and_memory(void) {
+    uint8_t value;
+    uint64_t flags;
+    __asm__ volatile("stc\n\tmovb $0x7f,%%al\n\tadcb $0,%%al\n\tmovb %%al,%0\n\tpushfq\n\tpopq %1"
+        : "=r"(value), "=r"(flags) : : "rax", "cc");
+    TEST_ASSERT(value == 0x80, "adcb signed-overflow result");
+    TEST_ASSERT(!(flags & CF_FLAG) && (flags & OF_FLAG) && (flags & AF_FLAG) &&
+                !(flags & ZF_FLAG) && (flags & SF_FLAG) && !(flags & PF_FLAG),
+                "adcb 0x7f+CF full flags=0x%llx", (unsigned long long)flags);
+
+    __asm__ volatile("stc\n\tmovb $0xff,%%al\n\tadcb $0,%%al\n\tmovb %%al,%0\n\tpushfq\n\tpopq %1"
+        : "=r"(value), "=r"(flags) : : "rax", "cc");
+    TEST_ASSERT(value == 0, "adcb carry result zero");
+    TEST_ASSERT((flags & CF_FLAG) && !(flags & OF_FLAG) && (flags & AF_FLAG) &&
+                (flags & ZF_FLAG) && !(flags & SF_FLAG) && (flags & PF_FLAG),
+                "adcb 0xff+CF full flags=0x%llx", (unsigned long long)flags);
+
+    uint32_t mem = UINT32_MAX;
+    __asm__ volatile("stc\n\tlock adcl $0,%0\n\tpushfq\n\tpopq %1"
+        : "+m"(mem), "=r"(flags) : : "cc", "memory");
+    TEST_ASSERT(mem == 0 && (flags & CF_FLAG) && (flags & ZF_FLAG), "lock adcl memory destination and flags");
+}
+
 int main(void) {
     TEST_START("ADC instruction");
     test_adc_with_carry_clear();
@@ -145,5 +168,6 @@ int main(void) {
     test_adc_chain();
     test_adc_overflow();
     test_adc_sizes();
+    test_adc_complete_flags_and_memory();
     TEST_END();
 }

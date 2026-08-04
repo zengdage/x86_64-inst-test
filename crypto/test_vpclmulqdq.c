@@ -13,6 +13,7 @@
  * Note: Do not use static linking.
  */
 #include "../common.h"
+#include "clmul_ref.h"
 
 /* Test VPCLMULQDQ xmm, xmm, xmm, imm8 */
 static void test_vpclmulqdq_reg(void) {
@@ -43,6 +44,10 @@ static void test_vpclmulqdq_reg(void) {
     );
     TEST_ASSERT(memcmp(&result, &result2, 16) == 0,
                 "vpclmulqdq xmm,xmm,xmm: deterministic");
+    uint64_t low, high;
+    clmul64_reference(a.u64[0], b.u64[0], &low, &high);
+    TEST_ASSERT(result.u64[0] == low && result.u64[1] == high,
+                "vpclmulqdq register form matches scalar reference");
 }
 
 /* Test VPCLMULQDQ matches legacy PCLMULQDQ */
@@ -118,6 +123,12 @@ static void test_vpclmulqdq_matches_legacy(void) {
         TEST_ASSERT(memcmp(&result_vex, &result_legacy, 16) == 0,
                     "vpclmulqdq matches pclmulqdq with imm8=0x%02x",
                     imm8_values[i]);
+        unsigned ai = imm8_values[i] & 1U;
+        unsigned bi = (imm8_values[i] >> 4) & 1U;
+        uint64_t low, high;
+        clmul64_reference(a.u64[ai], b.u64[bi], &low, &high);
+        TEST_ASSERT(result_vex.u64[0] == low && result_vex.u64[1] == high,
+                    "vpclmulqdq imm=0x%02x matches scalar reference", imm8_values[i]);
     }
 }
 
@@ -251,9 +262,35 @@ static void test_vpclmulqdq_selectors(void) {
         : "xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5"
     );
 
-    TEST_ASSERT(memcmp(&r00, &r01, 16) != 0, "vpclmulqdq: 0x00 != 0x01");
-    TEST_ASSERT(memcmp(&r00, &r10, 16) != 0, "vpclmulqdq: 0x00 != 0x10");
-    TEST_ASSERT(memcmp(&r00, &r11, 16) != 0, "vpclmulqdq: 0x00 != 0x11");
+    xmm_t results[] = {r00, r01, r10, r11};
+    const unsigned ai[] = {0, 1, 0, 1};
+    const unsigned bi[] = {0, 0, 1, 1};
+    for (int i = 0; i < 4; i++) {
+        uint64_t low, high;
+        clmul64_reference(a.u64[ai[i]], b.u64[bi[i]], &low, &high);
+        TEST_ASSERT(results[i].u64[0] == low && results[i].u64[1] == high,
+                    "vpclmulqdq selector %d matches scalar reference", i);
+    }
+}
+
+static void test_vpclmulqdq_high_immediate_bits(void) {
+    xmm_t a = { .u64 = {UINT64_C(0x0123456789abcdef), UINT64_C(0xfedcba9876543210)} };
+    xmm_t b = { .u64 = {UINT64_C(0x1111111111111111), UINT64_C(0x2222222222222222)} };
+    xmm_t r11, rff;
+
+    __asm__ volatile (
+        "vmovdqu %2, %%xmm0\n\t"
+        "vmovdqu %3, %%xmm1\n\t"
+        "vpclmulqdq $0x11, %%xmm1, %%xmm0, %%xmm2\n\t"
+        "vpclmulqdq $0xff, %%xmm1, %%xmm0, %%xmm3\n\t"
+        "vmovdqu %%xmm2, %0\n\t"
+        "vmovdqu %%xmm3, %1"
+        : "=m"(r11), "=m"(rff)
+        : "m"(a), "m"(b)
+        : "xmm0", "xmm1", "xmm2", "xmm3"
+    );
+    TEST_ASSERT(memcmp(&r11, &rff, sizeof(r11)) == 0,
+                "vpclmulqdq imm=0xff: reserved immediate bits ignored");
 }
 
 int main(void) {
@@ -264,5 +301,6 @@ int main(void) {
     test_vpclmulqdq_nondestructive();
     test_vpclmulqdq_known();
     test_vpclmulqdq_selectors();
+    test_vpclmulqdq_high_immediate_bits();
     TEST_END();
 }

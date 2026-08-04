@@ -19,16 +19,18 @@
  * Note: Do not use static linking (-static)
  */
 
+#define _GNU_SOURCE
 #include "../common.h"
+#include <pthread.h>
 
 /* Test LFENCE executes without fault */
 static void test_lfence_basic(void)
 {
     TEST_START("LFENCE - Basic execution");
 
-    __asm__ volatile ("lfence");
-
-    TEST_ASSERT(1, "LFENCE executed successfully");
+    uint64_t value = UINT64_C(0x0123456789abcdef);
+    __asm__ volatile ("lfence" : "+r"(value) : : "memory");
+    TEST_ASSERT(value == UINT64_C(0x0123456789abcdef), "LFENCE preserves registers");
 }
 
 /* Test SFENCE executes without fault */
@@ -36,9 +38,9 @@ static void test_sfence_basic(void)
 {
     TEST_START("SFENCE - Basic execution");
 
-    __asm__ volatile ("sfence");
-
-    TEST_ASSERT(1, "SFENCE executed successfully");
+    uint64_t value = UINT64_C(0xfedcba9876543210);
+    __asm__ volatile ("sfence" : "+r"(value) : : "memory");
+    TEST_ASSERT(value == UINT64_C(0xfedcba9876543210), "SFENCE preserves registers");
 }
 
 /* Test MFENCE executes without fault */
@@ -46,9 +48,9 @@ static void test_mfence_basic(void)
 {
     TEST_START("MFENCE - Basic execution");
 
-    __asm__ volatile ("mfence");
-
-    TEST_ASSERT(1, "MFENCE executed successfully");
+    uint64_t value = UINT64_C(0x8000000000000001);
+    __asm__ volatile ("mfence" : "+r"(value) : : "memory");
+    TEST_ASSERT(value == UINT64_C(0x8000000000000001), "MFENCE preserves registers");
 }
 
 /* Test multiple fences in sequence */
@@ -65,7 +67,8 @@ static void test_fence_sequence(void)
         "mfence"
     );
 
-    TEST_ASSERT(1, "Sequence of SFENCE/LFENCE/MFENCE executed successfully");
+    uint64_t flags = get_flags();
+    TEST_ASSERT(flags & (1ULL << 1), "Fence sequence returns with fixed RFLAGS bit 1 set");
 }
 
 /* Test LFENCE does not modify flags */
@@ -179,6 +182,84 @@ static void test_mfence_store_load(void)
     TEST_ASSERT(result == 99, "Load after MFENCE should see store: expected 99, got %" PRIu64, result);
 }
 
+enum { MFENCE_LITMUS_ITERATIONS = 10000 };
+
+struct mfence_litmus {
+    volatile uint32_t x;
+    volatile uint32_t y;
+    uint32_t read0;
+    uint32_t read1;
+    pthread_barrier_t start;
+    pthread_barrier_t done;
+};
+
+struct mfence_worker_arg {
+    struct mfence_litmus *state;
+    int id;
+};
+
+static void *mfence_worker(void *opaque)
+{
+    struct mfence_worker_arg *arg = opaque;
+    struct mfence_litmus *state = arg->state;
+    for (int iteration = 0; iteration < MFENCE_LITMUS_ITERATIONS; iteration++) {
+        pthread_barrier_wait(&state->start);
+        if (arg->id == 0) {
+            uint32_t value;
+            __asm__ volatile (
+                "movl $1, %1\n\t" "mfence\n\t" "movl %2, %0"
+                : "=r"(value), "=m"(state->x)
+                : "m"(state->y)
+                : "memory");
+            state->read0 = value;
+        } else {
+            uint32_t value;
+            __asm__ volatile (
+                "movl $1, %1\n\t" "mfence\n\t" "movl %2, %0"
+                : "=r"(value), "=m"(state->y)
+                : "m"(state->x)
+                : "memory");
+            state->read1 = value;
+        }
+        pthread_barrier_wait(&state->done);
+    }
+    return NULL;
+}
+
+static void test_mfence_store_buffering_litmus(void)
+{
+    struct mfence_litmus state;
+    struct mfence_worker_arg args[2] = {{&state, 0}, {&state, 1}};
+    pthread_t threads[2];
+    memset(&state, 0, sizeof(state));
+    int rc = pthread_barrier_init(&state.start, NULL, 3);
+    rc |= pthread_barrier_init(&state.done, NULL, 3);
+    TEST_ASSERT(rc == 0, "initialize MFENCE litmus barriers");
+    if (rc != 0) return;
+    rc = pthread_create(&threads[0], NULL, mfence_worker, &args[0]);
+    rc |= pthread_create(&threads[1], NULL, mfence_worker, &args[1]);
+    TEST_ASSERT(rc == 0, "create MFENCE litmus worker threads");
+    if (rc != 0) return;
+
+    unsigned forbidden = 0;
+    for (int iteration = 0; iteration < MFENCE_LITMUS_ITERATIONS; iteration++) {
+        state.x = 0;
+        state.y = 0;
+        state.read0 = UINT32_MAX;
+        state.read1 = UINT32_MAX;
+        pthread_barrier_wait(&state.start);
+        pthread_barrier_wait(&state.done);
+        if (state.read0 == 0 && state.read1 == 0) forbidden++;
+    }
+    pthread_join(threads[0], NULL);
+    pthread_join(threads[1], NULL);
+    pthread_barrier_destroy(&state.start);
+    pthread_barrier_destroy(&state.done);
+    TEST_ASSERT(forbidden == 0,
+                "MFENCE forbids store-buffering outcome r0=0,r1=0 (%u occurrences)",
+                forbidden);
+}
+
 /* Test fence instructions with RDTSC to measure approximate overhead */
 static void test_fence_overhead(void)
 {
@@ -203,6 +284,7 @@ static void test_fence_overhead(void)
     );
     tsc_start = ((uint64_t)hi1 << 32) | lo1;
     tsc_end = ((uint64_t)hi2 << 32) | lo2;
+    TEST_ASSERT(tsc_end > tsc_start, "LFENCE timing interval is positive");
     printf("  1000x LFENCE: ~%" PRIu64 " cycles (%.1f cycles/fence)\n",
            tsc_end - tsc_start, (double)(tsc_end - tsc_start) / 1000.0);
 
@@ -222,6 +304,7 @@ static void test_fence_overhead(void)
     );
     tsc_start = ((uint64_t)hi1 << 32) | lo1;
     tsc_end = ((uint64_t)hi2 << 32) | lo2;
+    TEST_ASSERT(tsc_end > tsc_start, "SFENCE timing interval is positive");
     printf("  1000x SFENCE: ~%" PRIu64 " cycles (%.1f cycles/fence)\n",
            tsc_end - tsc_start, (double)(tsc_end - tsc_start) / 1000.0);
 
@@ -241,11 +324,10 @@ static void test_fence_overhead(void)
     );
     tsc_start = ((uint64_t)hi1 << 32) | lo1;
     tsc_end = ((uint64_t)hi2 << 32) | lo2;
+    TEST_ASSERT(tsc_end > tsc_start, "MFENCE timing interval is positive");
     printf("  1000x MFENCE: ~%" PRIu64 " cycles (%.1f cycles/fence)\n",
            tsc_end - tsc_start, (double)(tsc_end - tsc_start) / 1000.0);
 
-    /* MFENCE should generally be more expensive than LFENCE/SFENCE */
-    TEST_ASSERT(1, "Fence overhead measurement completed");
 }
 
 int main(void)
@@ -260,6 +342,7 @@ int main(void)
     test_sfence_store_ordering();
     test_lfence_load_ordering();
     test_mfence_store_load();
+    test_mfence_store_buffering_litmus();
     test_fence_overhead();
 
     TEST_END();

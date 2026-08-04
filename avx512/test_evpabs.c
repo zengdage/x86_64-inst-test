@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <limits.h>
 #include "../common.h"
 
 typedef union {
@@ -24,11 +25,15 @@ typedef union {
     double f64[8];
 } zmm_t __attribute__((aligned(64)));
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx512(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile ("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
     return ((ebx >> 16) & 1) && ((ebx >> 30) & 1);
 }
+#else
+#define check_avx512() 1
+#endif
 
 int main(void) {
     if (!check_avx512()) {
@@ -116,6 +121,32 @@ int main(void) {
     for (int i = 0; i < 16; i++) {
         uint32_t expected = (kmask >> i) & 1 ? (uint32_t)(i + 1) : 0;
         TEST_ASSERT(dst.u32[i] == expected, "VPABSD zero mask lane %d: %u != %u", i, dst.u32[i], expected);
+    }
+
+    /* INT_MIN cannot be represented as a positive signed value; the bit pattern is preserved. */
+#define TEST_ABS_MIN(FIELD, MOVE, INSN, LANES, MINVAL, EXPECTED) do { \
+        for (int i = 0; i < (LANES); i++) src.FIELD[i] = (MINVAL); \
+        __asm__ volatile (MOVE " %1, %%zmm0\n\t" INSN " %%zmm0, %%zmm1\n\t" \
+                          MOVE " %%zmm1, %0" : "=m"(dst) : "m"(src) : "zmm0","zmm1"); \
+        for (int i = 0; i < (LANES); i++) \
+            TEST_ASSERT(dst.FIELD[i] == (EXPECTED), INSN " INT_MIN lane %d", i); \
+    } while (0)
+    TEST_ABS_MIN(u8,  "vmovdqu8",  "vpabsb", 64, INT8_MIN,  UINT8_C(0x80));
+    TEST_ABS_MIN(u16, "vmovdqu16", "vpabsw", 32, INT16_MIN, UINT16_C(0x8000));
+    TEST_ABS_MIN(u32, "vmovdqu32", "vpabsd", 16, INT32_MIN, UINT32_C(0x80000000));
+    TEST_ABS_MIN(u64, "vmovdqu64", "vpabsq", 8,  INT64_MIN, UINT64_C(0x8000000000000000));
+#undef TEST_ABS_MIN
+
+    /* Lowest/highest active dword mask bits with merge semantics. */
+    for (int i = 0; i < 16; i++) { src.i32[i] = -(i + 1); dst.u32[i] = UINT32_C(0xcccccccc); }
+    kmask = UINT64_C(0x8001);
+    __asm__ volatile (
+        "kmovq %2, %%k1\n\t" "vmovdqu32 %0, %%zmm2\n\t" "vmovdqu32 %1, %%zmm0\n\t"
+        "vpabsd %%zmm0, %%zmm2%{%%k1%}\n\t" "vmovdqu32 %%zmm2, %0"
+        : "+m"(dst) : "m"(src), "r"(kmask) : "zmm0","zmm2","k1");
+    for (int i = 0; i < 16; i++) {
+        uint32_t expected = (i == 0 || i == 15) ? (uint32_t)(i + 1) : UINT32_C(0xcccccccc);
+        TEST_ASSERT(dst.u32[i] == expected, "VPABSD endpoint merge mask lane %d", i);
     }
 
     TEST_END();

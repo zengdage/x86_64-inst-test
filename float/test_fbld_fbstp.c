@@ -181,10 +181,88 @@ static void test_fbld_fbstp_roundtrip(void) {
                 "fbld/fbstp roundtrip -1234: got %ld", bcd_to_int(bcd_out));
 }
 
+static void test_bcd_18_digit_boundaries(void) {
+    uint8_t bcd[10] __attribute__((aligned(16)));
+    long double value;
+    const uint64_t max_bcd = UINT64_C(999999999999999999);
+
+    make_bcd(bcd, max_bcd, 0);
+    __asm__ volatile (
+        "fbld %1\n\t"
+        "fstpt %0"
+        : "=m"(value)
+        : "m"(*bcd)
+    );
+    TEST_ASSERT(value == (long double)max_bcd,
+                "fbld largest 18-digit positive BCD exact");
+
+    make_bcd(bcd, max_bcd, 1);
+    __asm__ volatile (
+        "fbld %1\n\t"
+        "fstpt %0"
+        : "=m"(value)
+        : "m"(*bcd)
+    );
+    TEST_ASSERT(value == -(long double)max_bcd,
+                "fbld largest 18-digit negative BCD exact");
+
+    value = (long double)max_bcd;
+    __asm__ volatile (
+        "fldt %1\n\t"
+        "fbstp %0"
+        : "=m"(*bcd)
+        : "m"(value)
+    );
+    TEST_ASSERT(bcd_to_int(bcd) == (int64_t)max_bcd,
+                "fbstp largest 18-digit positive BCD");
+}
+
+static void test_bcd_signed_zero_rounding_and_invalid(void) {
+    uint8_t bcd[10] __attribute__((aligned(16)));
+    long double extended;
+    uint16_t saved_cw, cw, status;
+
+    make_bcd(bcd, 0, 1);
+    __asm__ volatile("fbld %1\n\tfstpt %0" : "=m"(extended) : "m"(*bcd));
+    TEST_ASSERT(extended == 0.0L && signbit(extended), "fbld negative packed-BCD zero -> -0");
+
+    extended = -0.0L;
+    memset(bcd, 0, sizeof(bcd));
+    __asm__ volatile("fldt %1\n\tfbstp %0" : "=m"(*bcd) : "m"(extended));
+    TEST_ASSERT(bcd_to_int(bcd) == 0 && (bcd[9] & 0x80),
+                "fbstp -0 preserves packed-BCD sign bit");
+
+    __asm__ volatile("fnstcw %0" : "=m"(saved_cw));
+    long double positive = 2.5L, negative = -2.5L;
+    const int64_t expected[4][2] = {{2,-2}, {2,-3}, {3,-2}, {2,-2}};
+    for (uint16_t mode = 0; mode < 4; mode++) {
+        cw = (uint16_t)((saved_cw & ~UINT16_C(0x0c00)) | (mode << 10));
+        __asm__ volatile("fldcw %0" : : "m"(cw));
+        __asm__ volatile("fldt %1\n\tfbstp %0" : "=m"(*bcd) : "m"(positive));
+        int64_t pos_result = bcd_to_int(bcd);
+        __asm__ volatile("fldt %1\n\tfbstp %0" : "=m"(*bcd) : "m"(negative));
+        int64_t neg_result = bcd_to_int(bcd);
+        TEST_ASSERT(pos_result == expected[mode][0] && neg_result == expected[mode][1],
+                    "fbstp control-word rounding mode %u: %ld %ld",
+                    mode, pos_result, neg_result);
+    }
+
+    long double out_of_range = 1000000000000000000.0L;
+    __asm__ volatile(
+        "fnclex\n\tfldt %2\n\tfbstp %0\n\tfnstsw %1"
+        : "=m"(*bcd), "=m"(status) : "m"(out_of_range) : "memory"
+    );
+    TEST_ASSERT(status & 1, "fbstp 19-digit value sets invalid status");
+
+    __asm__ volatile("fldcw %0\n\tfnclex" : : "m"(saved_cw));
+}
+
 int main(void) {
     TEST_START("FBLD/FBSTP instructions");
     test_fbld();
     test_fbstp();
     test_fbld_fbstp_roundtrip();
+    test_bcd_18_digit_boundaries();
+    test_bcd_signed_zero_rounding_and_invalid();
     TEST_END();
 }

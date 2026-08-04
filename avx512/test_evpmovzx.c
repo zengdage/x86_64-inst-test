@@ -24,11 +24,15 @@ typedef union {
     double f64[8];
 } zmm_t __attribute__((aligned(64)));
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx512(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile ("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
     return (ebx >> 16) & 1;
 }
+#else
+#define check_avx512() 1
+#endif
 
 int main(void) {
     if (!check_avx512()) {
@@ -114,6 +118,39 @@ int main(void) {
     );
     for (int i = 0; i < 16; i++)
         TEST_ASSERT(dst.u32[i] == 0xFF, "VPMOVZXBD all-ones lane %d: %u", i, dst.u32[i]);
+
+    /* Zero and maximum boundaries for every source width. */
+    for (int i = 0; i < 16; i++) xsrc.u8[i] = (i & 1) ? UINT8_MAX : 0;
+    __asm__ volatile ("vmovdqu %1, %%xmm0\n\t" "vpmovzxbd %%xmm0, %%zmm1\n\t" "vmovdqu32 %%zmm1, %0"
+                      : "=m"(dst) : "m"(xsrc) : "xmm0","zmm1");
+    for (int i = 0; i < 16; i++) TEST_ASSERT(dst.u32[i] == ((i & 1) ? UINT8_MAX : 0), "VPMOVZXBD extrema lane %d", i);
+    __asm__ volatile ("vmovdqu %1, %%xmm0\n\t" "vpmovzxbq %%xmm0, %%zmm1\n\t" "vmovdqu64 %%zmm1, %0"
+                      : "=m"(dst) : "m"(xsrc) : "xmm0","zmm1");
+    for (int i = 0; i < 8; i++) TEST_ASSERT(dst.u64[i] == ((i & 1) ? UINT8_MAX : 0), "VPMOVZXBQ extrema lane %d", i);
+
+    for (int i = 0; i < 16; i++) ysrc.u16[i] = (i & 1) ? UINT16_MAX : 0;
+    __asm__ volatile ("vmovdqu %1, %%ymm0\n\t" "vpmovzxwd %%ymm0, %%zmm1\n\t" "vmovdqu32 %%zmm1, %0"
+                      : "=m"(dst) : "m"(ysrc) : "ymm0","zmm1");
+    for (int i = 0; i < 16; i++) TEST_ASSERT(dst.u32[i] == ((i & 1) ? UINT16_MAX : 0), "VPMOVZXWD extrema lane %d", i);
+    for (int i = 0; i < 8; i++) xsrc.u16[i] = (i & 1) ? UINT16_MAX : 0;
+    __asm__ volatile ("vmovdqu %1, %%xmm0\n\t" "vpmovzxwq %%xmm0, %%zmm1\n\t" "vmovdqu64 %%zmm1, %0"
+                      : "=m"(dst) : "m"(xsrc) : "xmm0","zmm1");
+    for (int i = 0; i < 8; i++) TEST_ASSERT(dst.u64[i] == ((i & 1) ? UINT16_MAX : 0), "VPMOVZXWQ extrema lane %d", i);
+
+    for (int i = 0; i < 8; i++) ysrc.u32[i] = (i & 1) ? UINT32_MAX : 0;
+    __asm__ volatile ("vmovdqu %1, %%ymm0\n\t" "vpmovzxdq %%ymm0, %%zmm1\n\t" "vmovdqu64 %%zmm1, %0"
+                      : "=m"(dst) : "m"(ysrc) : "ymm0","zmm1");
+    for (int i = 0; i < 8; i++) TEST_ASSERT(dst.u64[i] == ((i & 1) ? UINT32_MAX : 0), "VPMOVZXDQ extrema lane %d", i);
+
+    uint32_t kmask = UINT32_C(0x8001);
+    __asm__ volatile (
+        "kmovd %2, %%k1\n\t" "vmovdqu %1, %%xmm0\n\t"
+        "vpmovzxbd %%xmm0, %%zmm1%{%%k1%}%{z%}\n\t" "vmovdqu32 %%zmm1, %0"
+        : "=m"(dst) : "m"(xsrc), "r"(kmask) : "xmm0","zmm1","k1");
+    for (int i = 0; i < 16; i++) {
+        uint32_t expected = (i == 0 || i == 15) ? xsrc.u8[i] : 0;
+        TEST_ASSERT(dst.u32[i] == expected, "VPMOVZXBD endpoint zero mask lane %d", i);
+    }
 
     TEST_END();
 }

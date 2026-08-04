@@ -24,11 +24,15 @@ typedef union {
     double f64[8];
 } zmm_t __attribute__((aligned(64)));
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx512bw(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile ("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
     return ((ebx >> 16) & 1) && ((ebx >> 30) & 1);
 }
+#else
+#define check_avx512bw() 1
+#endif
 
 static int8_t sat_sub_i8(int8_t a, int8_t b) {
     int r = (int)a - b;
@@ -121,6 +125,36 @@ int main(void) {
         : "=m"(dst) : "m"(a), "m"(b) : "zmm0","zmm1","zmm2"
     );
     TEST_ASSERT(dst.i8[0] == -128, "VPSUBSB min sat: %d", dst.i8[0]);
+
+    a.i8[0] = INT8_MIN; b.i8[0] = 1; a.i8[1] = INT8_MAX; b.i8[1] = -1;
+    a.i8[2] = INT8_MIN + 1; b.i8[2] = 1; a.i8[3] = INT8_MAX - 1; b.i8[3] = -1;
+    __asm__ volatile ("vmovdqu8 %1,%%zmm0\n\tvmovdqu8 %2,%%zmm1\n\tvpsubsb %%zmm1,%%zmm0,%%zmm2\n\tvmovdqu8 %%zmm2,%0"
+        : "=m"(dst) : "m"(a), "m"(b) : "zmm0", "zmm1", "zmm2");
+    TEST_ASSERT(dst.i8[0] == INT8_MIN && dst.i8[1] == INT8_MAX && dst.i8[2] == INT8_MIN && dst.i8[3] == INT8_MAX,
+        "VPSUBSB exact saturation thresholds");
+
+    a.i16[0] = INT16_MIN; b.i16[0] = 1; a.i16[1] = INT16_MAX; b.i16[1] = -1;
+    a.i16[2] = INT16_MIN + 1; b.i16[2] = 1; a.i16[3] = INT16_MAX - 1; b.i16[3] = -1;
+    __asm__ volatile ("vmovdqu16 %1,%%zmm0\n\tvmovdqu16 %2,%%zmm1\n\tvpsubsw %%zmm1,%%zmm0,%%zmm2\n\tvmovdqu16 %%zmm2,%0"
+        : "=m"(dst) : "m"(a), "m"(b) : "zmm0", "zmm1", "zmm2");
+    TEST_ASSERT(dst.i16[0] == INT16_MIN && dst.i16[1] == INT16_MAX && dst.i16[2] == INT16_MIN && dst.i16[3] == INT16_MAX,
+        "VPSUBSW exact saturation thresholds");
+
+    a.u8[0] = 0; b.u8[0] = 1; a.u8[1] = 1; b.u8[1] = 1; a.u8[2] = UINT8_MAX; b.u8[2] = 0;
+    __asm__ volatile ("vmovdqu8 %1,%%zmm0\n\tvmovdqu8 %2,%%zmm1\n\tvpsubusb %%zmm1,%%zmm0,%%zmm2\n\tvmovdqu8 %%zmm2,%0"
+        : "=m"(dst) : "m"(a), "m"(b) : "zmm0", "zmm1", "zmm2");
+    TEST_ASSERT(dst.u8[0] == 0 && dst.u8[1] == 0 && dst.u8[2] == UINT8_MAX, "VPSUBUSB thresholds");
+
+    a.u16[0] = 0; b.u16[0] = 1; a.u16[1] = 1; b.u16[1] = 1; a.u16[2] = UINT16_MAX; b.u16[2] = 0;
+    __asm__ volatile ("vmovdqu16 %1,%%zmm0\n\tvmovdqu16 %2,%%zmm1\n\tvpsubusw %%zmm1,%%zmm0,%%zmm2\n\tvmovdqu16 %%zmm2,%0"
+        : "=m"(dst) : "m"(a), "m"(b) : "zmm0", "zmm1", "zmm2");
+    TEST_ASSERT(dst.u16[0] == 0 && dst.u16[1] == 0 && dst.u16[2] == UINT16_MAX, "VPSUBUSW thresholds");
+
+    uint64_t kmask = UINT64_C(0x8000000000000001);
+    memset(&a, 3, sizeof(a)); memset(&b, 1, sizeof(b));
+    __asm__ volatile ("kmovq %3,%%k1\n\tvmovdqu8 %1,%%zmm0\n\tvmovdqu8 %2,%%zmm1\n\tvpsubsb %%zmm1,%%zmm0,%%zmm2%{%%k1%}%{z%}\n\tvmovdqu8 %%zmm2,%0"
+        : "=m"(dst) : "m"(a), "m"(b), "r"(kmask) : "zmm0", "zmm1", "zmm2", "k1");
+    for (int i = 0; i < 64; i++) TEST_ASSERT(dst.i8[i] == ((i == 0 || i == 63) ? 2 : 0), "VPSUBSB low/high mask lane %d", i);
 
     TEST_END();
 }

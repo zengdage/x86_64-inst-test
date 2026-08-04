@@ -80,6 +80,20 @@ static void test_vextractf128_to_xmm(void) {
     TEST_ASSERT(dst.f64[1] == 4.4, "vextractf128 to xmm [1]: got %f", dst.f64[1]);
 }
 
+static void test_vextract_immediate_high_bits(void) {
+    ymm_t src = { .u32 = {0,1,2,3,4,5,6,7} };
+    xmm_t low, high;
+    __asm__ volatile (
+        "vmovdqu %2, %%ymm0\n\t"
+        "vextracti128 $0xfe, %%ymm0, %0\n\t"
+        "vextracti128 $0xff, %%ymm0, %1"
+        : "=m"(low), "=m"(high) : "m"(src) : "ymm0");
+    for (int i = 0; i < 4; i++) {
+        TEST_ASSERT(low.u32[i] == src.u32[i], "vextracti128 imm=fe low lane element %d", i);
+        TEST_ASSERT(high.u32[i] == src.u32[i + 4], "vextracti128 imm=ff high lane element %d", i);
+    }
+}
+
 int main(void) {
     TEST_START("VEXTRACTF128/VEXTRACTI128 instructions (AVX)");
     test_vextractf128_low();
@@ -87,6 +101,7 @@ int main(void) {
     test_vextracti128_low();
     test_vextracti128_high();
     test_vextractf128_to_xmm();
+    test_vextract_immediate_high_bits();
     __asm__ volatile ("vzeroupper");
     TEST_END();
 }

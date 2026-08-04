@@ -119,6 +119,29 @@ static void test_sbb_sizes(void) {
     TEST_ASSERT(r32 == 499, "sbbl 1000-500-1 expected 499, got %u", r32);
 }
 
+static void test_sbb_complete_flags_and_memory(void) {
+    uint8_t value;
+    uint64_t flags;
+    __asm__ volatile("stc\n\tmovb $0x80,%%al\n\tsbbb $0,%%al\n\tmovb %%al,%0\n\tpushfq\n\tpopq %1"
+        : "=r"(value), "=r"(flags) : : "rax", "cc");
+    TEST_ASSERT(value == 0x7f, "sbbb signed-overflow result");
+    TEST_ASSERT(!(flags & CF_FLAG) && (flags & OF_FLAG) && (flags & AF_FLAG) &&
+                !(flags & ZF_FLAG) && !(flags & SF_FLAG) && !(flags & PF_FLAG),
+                "sbbb 0x80-CF full flags=0x%llx", (unsigned long long)flags);
+
+    __asm__ volatile("movb $0,%%al\n\tstc\n\tsbbb $0,%%al\n\tmovb %%al,%0\n\tpushfq\n\tpopq %1"
+        : "=r"(value), "=r"(flags) : : "rax", "cc");
+    TEST_ASSERT(value == 0xff, "sbbb borrow result");
+    TEST_ASSERT((flags & CF_FLAG) && !(flags & OF_FLAG) && (flags & AF_FLAG) &&
+                !(flags & ZF_FLAG) && (flags & SF_FLAG) && (flags & PF_FLAG),
+                "sbbb 0-CF full flags=0x%llx", (unsigned long long)flags);
+
+    uint32_t mem = 0;
+    __asm__ volatile("stc\n\tlock sbbl $0,%0\n\tpushfq\n\tpopq %1"
+        : "+m"(mem), "=r"(flags) : : "cc", "memory");
+    TEST_ASSERT(mem == UINT32_MAX && (flags & CF_FLAG) && (flags & SF_FLAG), "lock sbbl memory destination and flags");
+}
+
 int main(void) {
     TEST_START("SBB instruction");
     test_sbb_no_borrow();
@@ -126,5 +149,6 @@ int main(void) {
     test_sbb_underflow();
     test_sbb_chain();
     test_sbb_sizes();
+    test_sbb_complete_flags_and_memory();
     TEST_END();
 }

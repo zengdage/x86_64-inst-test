@@ -8,11 +8,34 @@
 #include <stdio.h>
 #include "../common.h"
 
+#define STR1(x) #x
+#define STR(x) STR1(x)
+#define RUN_SHIFT_IMM(op, count, src, dst) do { \
+    __asm__ volatile( \
+        "vmovdqu %1, %%ymm0\n\t" \
+        STR(op) " $" STR(count) ", %%ymm0, %%ymm1\n\t" \
+        "vmovdqu %%ymm1, %0" \
+        : "=m"(dst) : "m"(src) : "ymm0", "ymm1"); \
+} while (0)
+
+#define RUN_SHIFT_COUNT(op, count, src, dst) do { \
+    __asm__ volatile( \
+        "vmovdqu %1, %%ymm0\n\t" \
+        "vmovdqu %2, %%xmm2\n\t" \
+        STR(op) " %%xmm2, %%ymm0, %%ymm1\n\t" \
+        "vmovdqu %%ymm1, %0" \
+        : "=m"(dst) : "m"(src), "m"(count) : "ymm0", "ymm1", "xmm2"); \
+} while (0)
+
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx2(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__("cpuid" : "=a"(eax),"=b"(ebx),"=c"(ecx),"=d"(edx) : "a"(7),"c"(0));
     return (ebx >> 5) & 1;
 }
+#else
+#define check_avx2() 1
+#endif
 
 static void test_vpslld(void) {
     TEST_START("VPSLLD (256-bit shift left dword by imm)");
@@ -171,6 +194,73 @@ static void test_vpsraw(void) {
     TEST_ASSERT(r[0] == -1, "vpsraw neg r[0]=%d", r[0]);
 }
 
+static void test_shift_count_boundaries(void) {
+    TEST_START("VPSHIFT count boundaries");
+    uint16_t w[16], wr[16];
+    uint32_t d[8], dr[8];
+    uint64_t q[4], qr[4];
+    int16_t sw[16], swr[16];
+    int32_t sd[8], sdr[8];
+
+    for (int i = 0; i < 16; i++) {
+        w[i] = (uint16_t)(0x8001u + i);
+        sw[i] = (i & 1) ? (int16_t)0x4000 : (int16_t)0x8000;
+    }
+    for (int i = 0; i < 8; i++) {
+        d[i] = 0x80000001u + (uint32_t)i;
+        sd[i] = (i & 1) ? 0x40000000 : (int32_t)0x80000000u;
+    }
+    for (int i = 0; i < 4; i++) q[i] = UINT64_C(0x8000000000000001) + (uint64_t)i;
+
+    RUN_SHIFT_IMM(vpsllw, 0, w, wr);
+    for (int i = 0; i < 16; i++) TEST_ASSERT(wr[i] == w[i], "vpsllw count 0 lane %d", i);
+    RUN_SHIFT_IMM(vpsllw, 15, w, wr);
+    for (int i = 0; i < 16; i++) TEST_ASSERT(wr[i] == (uint16_t)(w[i] << 15), "vpsllw count 15 lane %d", i);
+    RUN_SHIFT_IMM(vpsllw, 16, w, wr);
+    for (int i = 0; i < 16; i++) TEST_ASSERT(wr[i] == 0, "vpsllw count 16 lane %d", i);
+    RUN_SHIFT_IMM(vpsllw, 17, w, wr);
+    for (int i = 0; i < 16; i++) TEST_ASSERT(wr[i] == 0, "vpsllw count 17 lane %d", i);
+    RUN_SHIFT_IMM(vpsllw, 255, w, wr);
+    for (int i = 0; i < 16; i++) TEST_ASSERT(wr[i] == 0, "vpsllw count 255 lane %d", i);
+
+    RUN_SHIFT_IMM(vpsrld, 0, d, dr);
+    for (int i = 0; i < 8; i++) TEST_ASSERT(dr[i] == d[i], "vpsrld count 0 lane %d", i);
+    RUN_SHIFT_IMM(vpsrld, 31, d, dr);
+    for (int i = 0; i < 8; i++) TEST_ASSERT(dr[i] == (d[i] >> 31), "vpsrld count 31 lane %d", i);
+    RUN_SHIFT_IMM(vpsrld, 32, d, dr);
+    for (int i = 0; i < 8; i++) TEST_ASSERT(dr[i] == 0, "vpsrld count 32 lane %d", i);
+    RUN_SHIFT_IMM(vpsrld, 33, d, dr);
+    for (int i = 0; i < 8; i++) TEST_ASSERT(dr[i] == 0, "vpsrld count 33 lane %d", i);
+    RUN_SHIFT_IMM(vpsrld, 255, d, dr);
+    for (int i = 0; i < 8; i++) TEST_ASSERT(dr[i] == 0, "vpsrld count 255 lane %d", i);
+
+    RUN_SHIFT_IMM(vpsrlq, 0, q, qr);
+    for (int i = 0; i < 4; i++) TEST_ASSERT(qr[i] == q[i], "vpsrlq count 0 lane %d", i);
+    RUN_SHIFT_IMM(vpsrlq, 63, q, qr);
+    for (int i = 0; i < 4; i++) TEST_ASSERT(qr[i] == (q[i] >> 63), "vpsrlq count 63 lane %d", i);
+    RUN_SHIFT_IMM(vpsrlq, 64, q, qr);
+    for (int i = 0; i < 4; i++) TEST_ASSERT(qr[i] == 0, "vpsrlq count 64 lane %d", i);
+    RUN_SHIFT_IMM(vpsrlq, 65, q, qr);
+    for (int i = 0; i < 4; i++) TEST_ASSERT(qr[i] == 0, "vpsrlq count 65 lane %d", i);
+    RUN_SHIFT_IMM(vpsrlq, 255, q, qr);
+    for (int i = 0; i < 4; i++) TEST_ASSERT(qr[i] == 0, "vpsrlq count 255 lane %d", i);
+
+    RUN_SHIFT_IMM(vpsraw, 16, sw, swr);
+    for (int i = 0; i < 16; i++) TEST_ASSERT(swr[i] == (sw[i] < 0 ? -1 : 0), "vpsraw saturated lane %d", i);
+    RUN_SHIFT_IMM(vpsrad, 255, sd, sdr);
+    for (int i = 0; i < 8; i++) TEST_ASSERT(sdr[i] == (sd[i] < 0 ? -1 : 0), "vpsrad saturated lane %d", i);
+
+    /* Packed shifts consume a single unsigned count from the low 64 bits. */
+    uint64_t count_high_ignored[2] = {1, UINT64_MAX};
+    uint64_t count_low_max[2] = {UINT64_MAX, 0};
+    RUN_SHIFT_COUNT(vpsrld, count_high_ignored, d, dr);
+    for (int i = 0; i < 8; i++) TEST_ASSERT(dr[i] == (d[i] >> 1), "vpsrld ignores count high qword lane %d", i);
+    RUN_SHIFT_COUNT(vpsrld, count_low_max, d, dr);
+    for (int i = 0; i < 8; i++) TEST_ASSERT(dr[i] == 0, "vpsrld UINT64_MAX count lane %d", i);
+    RUN_SHIFT_COUNT(vpsrad, count_low_max, sd, sdr);
+    for (int i = 0; i < 8; i++) TEST_ASSERT(sdr[i] == (sd[i] < 0 ? -1 : 0), "vpsrad UINT64_MAX count lane %d", i);
+}
+
 int main(void) {
     if (!check_avx2()) { printf("AVX2 not supported\n"); return 1; }
     test_vpslld();
@@ -182,5 +272,6 @@ int main(void) {
     test_vpsrad();
     test_vpsraq();
     test_vpsraw();
+    test_shift_count_boundaries();
     TEST_END();
 }

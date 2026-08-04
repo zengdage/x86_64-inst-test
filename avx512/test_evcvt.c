@@ -9,6 +9,9 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <float.h>
+#include <limits.h>
+#include <math.h>
 #include "../common.h"
 
 typedef union {
@@ -24,11 +27,114 @@ typedef union {
     double f64[8];
 } zmm_t __attribute__((aligned(64)));
 
+static void test_conversion_boundaries(void) {
+    zmm_t src, dst;
+    ymm_t ydst;
+
+    const float ps_values[16] = {
+        NAN, INFINITY, -INFINITY, 2147483648.0f,
+        -2147483904.0f, 0.5f, -0.5f, 1.5f,
+        2.5f, -1.5f, -2.5f, 0.0f,
+        -0.0f, 2147483520.0f, -2147483648.0f, 42.0f
+    };
+    const uint32_t ps_expected[16] = {
+        0x80000000u, 0x80000000u, 0x80000000u, 0x80000000u,
+        0x80000000u, 0u, 0u, 2u,
+        2u, (uint32_t)-2, (uint32_t)-2, 0u,
+        0u, 0x7fffff80u, 0x80000000u, 42u
+    };
+    memcpy(src.f32, ps_values, sizeof(ps_values));
+    __asm__ volatile (
+        "vmovaps %1, %%zmm0\n\t"
+        "vcvtps2dq %%zmm0, %%zmm1\n\t"
+        "vmovdqa32 %%zmm1, %0"
+        : "=m"(dst) : "m"(src) : "zmm0", "zmm1"
+    );
+    for (int i = 0; i < 16; i++)
+        TEST_ASSERT(dst.u32[i] == ps_expected[i],
+            "VCVTPS2DQ boundary lane %d: 0x%08x != 0x%08x", i, dst.u32[i], ps_expected[i]);
+
+    const double pd_values[8] = {
+        NAN, INFINITY, -INFINITY, 2147483648.0,
+        -2147483649.0, 0.5, 1.5, 2.5
+    };
+    const uint32_t pd_expected[8] = {
+        0x80000000u, 0x80000000u, 0x80000000u, 0x80000000u,
+        0x80000000u, 0u, 2u, 2u
+    };
+    memcpy(src.f64, pd_values, sizeof(pd_values));
+    __asm__ volatile (
+        "vmovapd %1, %%zmm0\n\t"
+        "vcvtpd2dq %%zmm0, %%ymm1\n\t"
+        "vmovdqu %%ymm1, %0"
+        : "=m"(ydst) : "m"(src) : "zmm0", "ymm1"
+    );
+    for (int i = 0; i < 8; i++)
+        TEST_ASSERT(ydst.u32[i] == pd_expected[i],
+            "VCVTPD2DQ boundary lane %d: 0x%08x != 0x%08x", i, ydst.u32[i], pd_expected[i]);
+
+    const double pd_round_values[8] = {0.5, -0.5, 1.5, 2.5, -1.5, -2.5, 3.5, -3.5};
+    const int32_t pd_round_expected[8] = {0, 0, 2, 2, -2, -2, 4, -4};
+    memcpy(src.f64, pd_round_values, sizeof(pd_round_values));
+    __asm__ volatile (
+        "vmovapd %1, %%zmm0\n\t"
+        "vcvtpd2dq %%zmm0, %%ymm1\n\t"
+        "vmovdqu %%ymm1, %0"
+        : "=m"(ydst) : "m"(src) : "zmm0", "ymm1"
+    );
+    for (int i = 0; i < 8; i++)
+        TEST_ASSERT(ydst.i32[i] == pd_round_expected[i],
+            "VCVTPD2DQ ties-to-even lane %d: %d != %d", i, ydst.i32[i], pd_round_expected[i]);
+
+    src.f64[0] = NAN;
+    src.f64[1] = INFINITY;
+    src.f64[2] = -INFINITY;
+    src.f64[3] = DBL_MAX;
+    src.f64[4] = 0.0;
+    src.f64[5] = -0.0;
+    src.f64[6] = 0x1p-149;
+    src.f64[7] = DBL_MIN;
+    __asm__ volatile (
+        "vmovapd %1, %%zmm0\n\t"
+        "vcvtpd2ps %%zmm0, %%ymm1\n\t"
+        "vmovaps %%ymm1, %0"
+        : "=m"(ydst) : "m"(src) : "zmm0", "ymm1"
+    );
+    TEST_ASSERT(isnan(ydst.f32[0]), "VCVTPD2PS NaN propagation");
+    TEST_ASSERT(isinf(ydst.f32[1]) && !signbit(ydst.f32[1]), "VCVTPD2PS +Inf");
+    TEST_ASSERT(isinf(ydst.f32[2]) && signbit(ydst.f32[2]), "VCVTPD2PS -Inf");
+    TEST_ASSERT(isinf(ydst.f32[3]) && !signbit(ydst.f32[3]), "VCVTPD2PS overflow to +Inf");
+    TEST_ASSERT(ydst.f32[4] == 0.0f && !signbit(ydst.f32[4]), "VCVTPD2PS +0 sign");
+    TEST_ASSERT(ydst.f32[5] == 0.0f && signbit(ydst.f32[5]), "VCVTPD2PS -0 sign");
+    TEST_ASSERT(ydst.f32[6] == 0x1p-149f, "VCVTPD2PS exact minimum subnormal");
+    TEST_ASSERT(ydst.f32[7] == 0.0f, "VCVTPD2PS underflow to zero");
+
+    for (int i = 0; i < 16; i++) src.i32[i] = 0;
+    src.i32[0] = INT32_MIN;
+    src.i32[1] = INT32_MAX;
+    src.i32[2] = 16777215;
+    src.i32[3] = 16777217;
+    __asm__ volatile (
+        "vmovdqa32 %1, %%zmm0\n\t"
+        "vcvtdq2ps %%zmm0, %%zmm1\n\t"
+        "vmovaps %%zmm1, %0"
+        : "=m"(dst) : "m"(src) : "zmm0", "zmm1"
+    );
+    TEST_ASSERT(dst.f32[0] == (float)INT32_MIN, "VCVTDQ2PS INT32_MIN");
+    TEST_ASSERT(dst.f32[1] == (float)INT32_MAX, "VCVTDQ2PS INT32_MAX rounding");
+    TEST_ASSERT(dst.f32[2] == 16777215.0f, "VCVTDQ2PS last consecutive integer");
+    TEST_ASSERT(dst.f32[3] == 16777216.0f, "VCVTDQ2PS ties-to-even boundary");
+}
+
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx512(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile ("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
     return (ebx >> 16) & 1;
 }
+#else
+#define check_avx512() 1
+#endif
 
 int main(void) {
     if (!check_avx512()) {
@@ -115,6 +221,8 @@ int main(void) {
     for (int i = 0; i < 8; i++)
         TEST_ASSERT(ydst.i32[i] == (int)src.f64[i],
             "VCVTPD2DQ lane %d: %d != %d", i, ydst.i32[i], (int)src.f64[i]);
+
+    test_conversion_boundaries();
 
     TEST_END();
 }

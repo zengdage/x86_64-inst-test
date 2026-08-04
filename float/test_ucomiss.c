@@ -256,6 +256,48 @@ static void test_comiss(void) {
     TEST_ASSERT(!(flags & CF_FLAG), "comiss 5==5: CF=0");
 }
 
+static void test_comiss_nan_exceptions_and_cleared_flags(void) {
+    xmm_t qnan = { .u32 = {UINT32_C(0x7fc12345), 0, 0, 0} };
+    xmm_t snan = { .u32 = {UINT32_C(0x7f812345), 0, 0, 0} };
+    xmm_t one = { .u32 = {UINT32_C(0x3f800000), 0, 0, 0} };
+    uint32_t old_mxcsr, clean_mxcsr, after_mxcsr;
+    uint64_t flags;
+
+    __asm__ volatile ("stmxcsr %0" : "=m"(old_mxcsr));
+    clean_mxcsr = old_mxcsr & ~UINT32_C(0x3f);
+
+#define RUN_COMISS_NAN(INSN, NAN_VALUE) do {                                \
+        __asm__ volatile ("ldmxcsr %0" : : "m"(clean_mxcsr));             \
+        __asm__ volatile (                                                  \
+            "movdqa %1, %%xmm0\n\t" "movdqa %2, %%xmm1\n\t"           \
+            "movq $0x8d5, %%r11\n\tpushq %%r11\n\tpopfq\n\t"           \
+            INSN " %%xmm1, %%xmm0\n\tpushfq\n\tpopq %0"                 \
+            : "=r"(flags) : "m"(NAN_VALUE), "m"(one)                    \
+            : "xmm0", "xmm1", "r11", "cc");                          \
+        __asm__ volatile ("stmxcsr %0" : "=m"(after_mxcsr));              \
+    } while (0)
+
+    RUN_COMISS_NAN("ucomiss", qnan);
+    TEST_ASSERT(!(after_mxcsr & 1), "UCOMISS QNaN does not set invalid flag");
+    TEST_ASSERT((flags & (ZF_FLAG | PF_FLAG | CF_FLAG)) ==
+                (ZF_FLAG | PF_FLAG | CF_FLAG), "UCOMISS QNaN produces unordered flags");
+    TEST_ASSERT(!(flags & (OF_FLAG | SF_FLAG | AF_FLAG)),
+                "UCOMISS clears OF/SF/AF");
+
+    RUN_COMISS_NAN("ucomiss", snan);
+    TEST_ASSERT(after_mxcsr & 1, "UCOMISS SNaN sets invalid flag");
+    TEST_ASSERT((flags & (ZF_FLAG | PF_FLAG | CF_FLAG)) ==
+                (ZF_FLAG | PF_FLAG | CF_FLAG), "UCOMISS SNaN produces unordered flags");
+
+    RUN_COMISS_NAN("comiss", qnan);
+    TEST_ASSERT(after_mxcsr & 1, "COMISS QNaN sets invalid flag");
+    TEST_ASSERT((flags & (ZF_FLAG | PF_FLAG | CF_FLAG)) ==
+                (ZF_FLAG | PF_FLAG | CF_FLAG), "COMISS QNaN produces unordered flags");
+    TEST_ASSERT(!(flags & (OF_FLAG | SF_FLAG | AF_FLAG)), "COMISS clears OF/SF/AF");
+#undef RUN_COMISS_NAN
+    __asm__ volatile ("ldmxcsr %0" : : "m"(old_mxcsr));
+}
+
 int main(void) {
     TEST_START("UCOMISS/COMISS instructions");
     test_ucomiss_greater();
@@ -265,5 +307,6 @@ int main(void) {
     test_ucomiss_special();
     test_ucomiss_mem();
     test_comiss();
+    test_comiss_nan_exceptions_and_cleared_flags();
     TEST_END();
 }

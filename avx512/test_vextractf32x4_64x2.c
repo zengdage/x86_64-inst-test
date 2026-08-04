@@ -19,10 +19,12 @@ int main(void) {
             : "=m"(r0), "=m"(r1), "=m"(r2), "=m"(r3)
             : "m"(src[0])
             : "zmm0");
-        TEST_ASSERT(r0.f32[0]==1 && r0.f32[3]==4,  "vextractf32x4 lane0: [%g..%g]", r0.f32[0], r0.f32[3]);
-        TEST_ASSERT(r1.f32[0]==5 && r1.f32[3]==8,  "vextractf32x4 lane1: [%g..%g]", r1.f32[0], r1.f32[3]);
-        TEST_ASSERT(r2.f32[0]==9 && r2.f32[3]==12, "vextractf32x4 lane2: [%g..%g]", r2.f32[0], r2.f32[3]);
-        TEST_ASSERT(r3.f32[0]==13&& r3.f32[3]==16, "vextractf32x4 lane3: [%g..%g]", r3.f32[0], r3.f32[3]);
+        for (int i = 0; i < 4; i++) {
+            TEST_ASSERT(r0.f32[i] == src[i],      "vextractf32x4 lane0 element %d", i);
+            TEST_ASSERT(r1.f32[i] == src[i + 4],  "vextractf32x4 lane1 element %d", i);
+            TEST_ASSERT(r2.f32[i] == src[i + 8],  "vextractf32x4 lane2 element %d", i);
+            TEST_ASSERT(r3.f32[i] == src[i + 12], "vextractf32x4 lane3 element %d", i);
+        }
     }
 
     /* VEXTRACTF64X2: extract 128-bit lane of doubles from 512-bit zmm */
@@ -57,8 +59,10 @@ int main(void) {
             : "=m"(r0), "=m"(r2)
             : "m"(src[0])
             : "zmm0");
-        TEST_ASSERT(r0.i32[0]==1 && r0.i32[3]==4,  "vextracti32x4 lane0: [%d..%d]", r0.i32[0], r0.i32[3]);
-        TEST_ASSERT(r2.i32[0]==9 && r2.i32[3]==12, "vextracti32x4 lane2: [%d..%d]", r2.i32[0], r2.i32[3]);
+        for (int i = 0; i < 4; i++) {
+            TEST_ASSERT(r0.i32[i] == src[i], "vextracti32x4 lane0 element %d", i);
+            TEST_ASSERT(r2.i32[i] == src[i + 8], "vextracti32x4 lane2 element %d", i);
+        }
     }
 
     /* VEXTRACTI64X2: extract 128-bit lane of int64 from 512-bit zmm */
@@ -91,6 +95,35 @@ int main(void) {
             : "ymm0");
         TEST_ASSERT(r0.f32[0]==1 && r0.f32[3]==4, "vextractf32x4 ymm lane0: [%g..%g]", r0.f32[0], r0.f32[3]);
         TEST_ASSERT(r1.f32[0]==5 && r1.f32[3]==8, "vextractf32x4 ymm lane1: [%g..%g]", r1.f32[0], r1.f32[3]);
+    }
+
+    /* Immediate high bits are ignored, and destination masks apply per element. */
+    {
+        uint32_t src[16] __attribute__((aligned(64)));
+        for (int i = 0; i < 16; i++) src[i] = UINT32_C(0x1000) + (uint32_t)i;
+        xmm_t wrapped, merged, zeroed;
+        uint32_t kmask = 0x9;
+        for (int i = 0; i < 4; i++) merged.u32[i] = UINT32_C(0xdeadbeef);
+        __asm__ volatile(
+            "vmovdqu32 %3, %%zmm0\n\t"
+            "vextracti32x4 $0xff, %%zmm0, %0\n\t"
+            "kmovd %4, %%k1\n\t"
+            "vmovdqu32 %1, %%xmm1\n\t"
+            "vextracti32x4 $3, %%zmm0, %%xmm1%{%%k1%}\n\t"
+            "vmovdqu32 %%xmm1, %1\n\t"
+            "vextracti32x4 $3, %%zmm0, %%xmm2%{%%k1%}%{z%}\n\t"
+            "vmovdqu32 %%xmm2, %2"
+            : "=m"(wrapped), "+m"(merged), "=m"(zeroed)
+            : "m"(src[0]), "r"(kmask)
+            : "zmm0", "xmm1", "xmm2", "k1");
+        for (int i = 0; i < 4; i++) {
+            uint32_t lane3 = src[12 + i];
+            TEST_ASSERT(wrapped.u32[i] == lane3, "vextracti32x4 imm=ff element %d", i);
+            TEST_ASSERT(merged.u32[i] == ((kmask >> i) & 1U ? lane3 : UINT32_C(0xdeadbeef)),
+                        "vextracti32x4 merge mask element %d", i);
+            TEST_ASSERT(zeroed.u32[i] == ((kmask >> i) & 1U ? lane3 : 0U),
+                        "vextracti32x4 zero mask element %d", i);
+        }
     }
 
     TEST_END();

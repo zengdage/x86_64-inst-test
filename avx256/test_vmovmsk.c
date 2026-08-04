@@ -8,11 +8,15 @@
 #include <stdio.h>
 #include "../common.h"
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__("cpuid" : "=a"(eax),"=b"(ebx),"=c"(ecx),"=d"(edx) : "a"(1),"c"(0));
     return (ecx >> 28) & 1;
 }
+#else
+#define check_avx() 1
+#endif
 
 static void test_vmovmskpd_256(void) {
     TEST_START("VMOVMSKPD (256-bit)");
@@ -94,9 +98,44 @@ static void test_vmovmskps_256(void) {
     TEST_ASSERT(mask == 0x80, "vmovmskps one-neg mask=0x%02x", mask);
 }
 
+static void test_vmovmsk_special_bits_and_zero_extension(void) {
+    ymm_t ps = { .u32 = {
+        UINT32_C(0x80000001), UINT32_C(0x7f800000),
+        UINT32_C(0x7fc12345), UINT32_C(0x80000000),
+        UINT32_C(0x00000001), UINT32_C(0xff800000),
+        UINT32_C(0x7f800001), UINT32_C(0xffc54321)
+    } };
+    ymm_t pd = { .u64 = {
+        UINT64_C(0xfff0000000000000), UINT64_C(0x7ff8000000000001),
+        UINT64_C(0x0000000000000001), UINT64_C(0xfff0000000000001)
+    } };
+    uint64_t result;
+
+    __asm__ volatile (
+        "movq $-1, %%rax\n\t"
+        "vmovdqu %1, %%ymm0\n\t"
+        "vmovmskps %%ymm0, %%eax\n\t"
+        "movq %%rax, %0"
+        : "=r"(result) : "m"(ps) : "rax", "ymm0"
+    );
+    TEST_ASSERT(result == UINT64_C(0x00000000000000a9),
+                "vmovmskps special signs including endpoint lanes: %#" PRIx64, result);
+
+    __asm__ volatile (
+        "movq $-1, %%rax\n\t"
+        "vmovdqu %1, %%ymm0\n\t"
+        "vmovmskpd %%ymm0, %%eax\n\t"
+        "movq %%rax, %0"
+        : "=r"(result) : "m"(pd) : "rax", "ymm0"
+    );
+    TEST_ASSERT(result == UINT64_C(0x0000000000000009),
+                "vmovmskpd special signs including endpoint lanes: %#" PRIx64, result);
+}
+
 int main(void) {
     if (!check_avx()) { printf("AVX not supported\n"); return 1; }
     test_vmovmskpd_256();
     test_vmovmskps_256();
+    test_vmovmsk_special_bits_and_zero_extension();
     TEST_END();
 }

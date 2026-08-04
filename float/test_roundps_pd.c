@@ -229,6 +229,90 @@ static void test_roundpd_mem(void) {
     TEST_ASSERT(result.f64[1] == -4.0, "roundpd mem floor [1] -3.2=-4");
 }
 
+static void test_round_mxcsr_and_exceptions(void) {
+    xmm_t a = { .f32 = {1.9f, -1.1f, 2.5f, -2.5f} }, r;
+    uint32_t saved, csr;
+    __asm__ volatile("stmxcsr %0" : "=m"(saved));
+    const uint32_t modes[4] = {0u, 1u, 2u, 3u};
+    const float expected[4][4] = {
+        {2.0f,-1.0f,2.0f,-2.0f}, {1.0f,-2.0f,2.0f,-3.0f},
+        {2.0f,-1.0f,3.0f,-2.0f}, {1.0f,-1.0f,2.0f,-2.0f}
+    };
+    for (int m = 0; m < 4; m++) {
+        csr = (saved & ~(UINT32_C(3) << 13)) | (modes[m] << 13);
+        __asm__ volatile("ldmxcsr %0" : : "m"(csr));
+        __asm__ volatile("movaps %1,%%xmm0\n\troundps $4,%%xmm0,%%xmm1\n\tmovaps %%xmm1,%0"
+            : "=m"(r) : "m"(a) : "xmm0", "xmm1");
+        for (int i = 0; i < 4; i++) TEST_ASSERT(r.f32[i] == expected[m][i], "roundps MXCSR mode %d lane %d", m, i);
+    }
+
+    csr = saved & ~UINT32_C(0x3f);
+    __asm__ volatile("ldmxcsr %0" : : "m"(csr));
+    __asm__ volatile("movaps %0,%%xmm0\n\troundps $0,%%xmm0,%%xmm1" : : "m"(a) : "xmm0", "xmm1");
+    __asm__ volatile("stmxcsr %0" : "=m"(csr));
+    TEST_ASSERT(csr & (1u << 5), "roundps unsuppressed precision flag");
+    csr = saved & ~UINT32_C(0x3f);
+    __asm__ volatile("ldmxcsr %0" : : "m"(csr));
+    __asm__ volatile("movaps %0,%%xmm0\n\troundps $8,%%xmm0,%%xmm1" : : "m"(a) : "xmm0", "xmm1");
+    __asm__ volatile("stmxcsr %0" : "=m"(csr));
+    TEST_ASSERT(!(csr & (1u << 5)), "roundps imm bit3 suppresses precision flag");
+
+    a.u32[0] = 0x7f800001u; /* signaling NaN */
+    csr = saved & ~UINT32_C(0x3f);
+    __asm__ volatile("ldmxcsr %0" : : "m"(csr));
+    __asm__ volatile("movaps %1,%%xmm0\n\troundps $8,%%xmm0,%%xmm1\n\tmovaps %%xmm1,%0"
+        : "=m"(r) : "m"(a) : "xmm0", "xmm1");
+    __asm__ volatile("stmxcsr %0" : "=m"(csr));
+    __asm__ volatile("ldmxcsr %0" : : "m"(saved));
+    TEST_ASSERT(isnan(r.f32[0]) && (r.u32[0] & 0x00400000u), "roundps quiets SNaN");
+    TEST_ASSERT(csr & 1u, "roundps SNaN sets invalid flag");
+
+    xmm_t pd = { .f64 = {1.9, -1.1} };
+    const double expected_pd[4][2] = {
+        {2.0, -1.0}, {1.0, -2.0}, {2.0, -1.0}, {1.0, -1.0}
+    };
+    for (int mode = 0; mode < 4; mode++) {
+        csr = (saved & ~(UINT32_C(3) << 13)) | ((uint32_t)mode << 13);
+        __asm__ volatile("ldmxcsr %0" : : "m"(csr));
+        __asm__ volatile(
+            "roundpd $4, %1, %%xmm0\n\t"
+            "movapd %%xmm0, %0"
+            : "=m"(r) : "m"(pd) : "xmm0"
+        );
+        for (int lane = 0; lane < 2; lane++)
+            TEST_ASSERT(r.f64[lane] == expected_pd[mode][lane],
+                        "roundpd MXCSR mode %d lane %d", mode, lane);
+    }
+
+    csr = saved & ~UINT32_C(0x3f);
+    __asm__ volatile("ldmxcsr %0" : : "m"(csr));
+    __asm__ volatile("roundpd $0, %0, %%xmm0" : : "m"(pd) : "xmm0");
+    __asm__ volatile("stmxcsr %0" : "=m"(csr));
+    TEST_ASSERT(csr & (1u << 5), "roundpd unsuppressed precision flag");
+    csr = saved & ~UINT32_C(0x3f);
+    __asm__ volatile("ldmxcsr %0" : : "m"(csr));
+    __asm__ volatile("roundpd $8, %0, %%xmm0" : : "m"(pd) : "xmm0");
+    __asm__ volatile("stmxcsr %0" : "=m"(csr));
+    TEST_ASSERT(!(csr & (1u << 5)), "roundpd imm bit3 suppresses precision flag");
+
+    pd.u64[0] = UINT64_C(0x7ff0000000001234);
+    pd.u64[1] = UINT64_C(0x8000000000000000);
+    csr = saved & ~UINT32_C(0x3f);
+    __asm__ volatile("ldmxcsr %0" : : "m"(csr));
+    __asm__ volatile(
+        "roundpd $8, %1, %%xmm0\n\t"
+        "movapd %%xmm0, %0"
+        : "=m"(r) : "m"(pd) : "xmm0"
+    );
+    __asm__ volatile("stmxcsr %0" : "=m"(csr));
+    TEST_ASSERT(r.u64[0] == UINT64_C(0x7ff8000000001234),
+                "roundpd quiets SNaN with exact payload");
+    TEST_ASSERT(r.u64[1] == UINT64_C(0x8000000000000000),
+                "roundpd preserves negative zero bits");
+    TEST_ASSERT(csr & 1u, "roundpd SNaN sets invalid despite imm bit3");
+    __asm__ volatile("ldmxcsr %0" : : "m"(saved));
+}
+
 int main(void) {
     TEST_START("ROUNDPS/ROUNDPD instructions (SSE4.1)");
     test_roundps_nearest();
@@ -243,5 +327,6 @@ int main(void) {
     test_roundpd_trunc();
     test_roundpd_special();
     test_roundpd_mem();
+    test_round_mxcsr_and_exceptions();
     TEST_END();
 }

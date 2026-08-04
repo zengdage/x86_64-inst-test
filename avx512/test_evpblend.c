@@ -24,11 +24,15 @@ typedef union {
     double f64[8];
 } zmm_t __attribute__((aligned(64)));
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx512(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile ("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
     return ((ebx >> 16) & 1) && ((ebx >> 30) & 1);
 }
+#else
+#define check_avx512() 1
+#endif
 
 int main(void) {
     if (!check_avx512()) {
@@ -122,6 +126,32 @@ int main(void) {
     );
     for (int i = 0; i < 16; i++)
         TEST_ASSERT(dst.u32[i] == 0xAAAAAAAAU, "VPBLENDMD all-a lane %d: %08x", i, dst.u32[i]);
+
+    /* Selector-mask boundaries for every element width. */
+#define TEST_BLEND_BOUNDARY(FIELD, MOVE, INSN, LANES, HIGHBIT) do { \
+        for (int i = 0; i < (LANES); i++) { a.FIELD[i] = 0x11; b.FIELD[i] = 0x22; } \
+        kmask = 0; \
+        __asm__ volatile ("kmovq %3, %%k1\n\t" MOVE " %1, %%zmm0\n\t" MOVE " %2, %%zmm1\n\t" \
+                          INSN " %%zmm0, %%zmm1, %%zmm2%{%%k1%}\n\t" MOVE " %%zmm2, %0" \
+                          : "=m"(dst) : "m"(a), "m"(b), "r"(kmask) \
+                          : "zmm0","zmm1","zmm2","k1"); \
+        for (int i = 0; i < (LANES); i++) \
+            TEST_ASSERT(dst.FIELD[i] == 0x22, INSN " k=0 lane %d", i); \
+        kmask = UINT64_C(1) | (HIGHBIT); \
+        __asm__ volatile ("kmovq %3, %%k1\n\t" MOVE " %1, %%zmm0\n\t" MOVE " %2, %%zmm1\n\t" \
+                          INSN " %%zmm0, %%zmm1, %%zmm2%{%%k1%}\n\t" MOVE " %%zmm2, %0" \
+                          : "=m"(dst) : "m"(a), "m"(b), "r"(kmask) \
+                          : "zmm0","zmm1","zmm2","k1"); \
+        for (int i = 0; i < (LANES); i++) { \
+            unsigned long long expected = (i == 0 || i == (LANES) - 1) ? 0x11 : 0x22; \
+            TEST_ASSERT(dst.FIELD[i] == expected, INSN " endpoint selector lane %d", i); \
+        } \
+    } while (0)
+    TEST_BLEND_BOUNDARY(u8,  "vmovdqu8",  "vpblendmb", 64, UINT64_C(0x8000000000000000));
+    TEST_BLEND_BOUNDARY(u16, "vmovdqu16", "vpblendmw", 32, UINT64_C(0x80000000));
+    TEST_BLEND_BOUNDARY(u32, "vmovdqu32", "vpblendmd", 16, UINT64_C(0x8000));
+    TEST_BLEND_BOUNDARY(u64, "vmovdqu64", "vpblendmq", 8,  UINT64_C(0x80));
+#undef TEST_BLEND_BOUNDARY
 
     TEST_END();
 }

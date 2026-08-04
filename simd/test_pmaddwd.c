@@ -11,6 +11,14 @@
  */
 #include "../common.h"
 
+static int16_t pmaddubsw_reference(uint8_t a0, int8_t b0,
+                                   uint8_t a1, int8_t b1) {
+    int32_t sum = (int32_t)a0 * b0 + (int32_t)a1 * b1;
+    if (sum > INT16_MAX) return INT16_MAX;
+    if (sum < INT16_MIN) return INT16_MIN;
+    return (int16_t)sum;
+}
+
 static void test_pmaddwd_basic(void) {
     xmm_t a = { .i16 = {1, 2, 3, 4, 5, 6, 7, 8} };
     xmm_t b = { .i16 = {10, 20, 30, 40, 50, 60, 70, 80} };
@@ -64,7 +72,11 @@ static void test_pmaddwd_overflow(void) {
     int32_t expected0 = 2 * (32767 * 32767);
     TEST_ASSERT(dst.i32[0] == expected0, "pmaddwd max*max: expected %d, got %d", expected0, dst.i32[0]);
     /* -32768*-32768 = 1073741824, *2 = 2147483648 which overflows to int32 */
-    /* Result wraps in the 32-bit dest */
+    TEST_ASSERT(dst.u32[1] == UINT32_C(0x80000000),
+                "pmaddwd INT16_MIN pairs wrap only exceptional sum to INT32_MIN: %#x",
+                dst.u32[1]);
+    TEST_ASSERT(dst.u32[2] == 0 && dst.u32[3] == 0,
+                "pmaddwd zero pairs remain zero in all remaining lanes");
 }
 
 static void test_pmaddubsw_basic(void) {
@@ -88,8 +100,14 @@ static void test_pmaddubsw_basic(void) {
 }
 
 static void test_pmaddubsw_saturation(void) {
-    xmm_t a = { .u8 = {255, 255, 255, 255, 0,0,0,0, 0,0,0,0, 0,0,0,0} };
-    xmm_t b = { .i8 = {127, 127, -128, -128, 0,0,0,0, 0,0,0,0, 0,0,0,0} };
+    xmm_t a = { .u8 = {
+        255,191, 254,255, 255,128, 255,129,
+        0,255, 255,255, 1,1, 255,255
+    } };
+    xmm_t b = { .i8 = {
+        127,2, 127,2, -128,-1, -128,-1,
+        127,127, 127,-128, 127,127, 0,0
+    } };
     xmm_t dst;
 
     __asm__ volatile (
@@ -98,10 +116,17 @@ static void test_pmaddubsw_saturation(void) {
         "movdqa %%xmm0, %0"
         : "=m"(dst) : "m"(a), "m"(b) : "xmm0"
     );
-    /* 255*127 + 255*127 = 64770, saturates to 32767 */
-    TEST_ASSERT(dst.i16[0] == 32767, "pmaddubsw positive sat: expected 32767, got %d", dst.i16[0]);
-    /* 255*(-128) + 255*(-128) = -65280, saturates to -32768 */
-    TEST_ASSERT(dst.i16[1] == -32768, "pmaddubsw negative sat: expected -32768, got %d", dst.i16[1]);
+    for (int lane = 0; lane < 8; lane++) {
+        int16_t expected = pmaddubsw_reference(a.u8[2 * lane], b.i8[2 * lane],
+                                               a.u8[2 * lane + 1], b.i8[2 * lane + 1]);
+        TEST_ASSERT(dst.i16[lane] == expected,
+                    "pmaddubsw saturation boundary lane %d: expected %d, got %d",
+                    lane, expected, dst.i16[lane]);
+    }
+    TEST_ASSERT(dst.i16[0] == INT16_MAX && dst.i16[1] == INT16_MAX,
+                "pmaddubsw covers exact positive maximum and positive overflow");
+    TEST_ASSERT(dst.i16[2] == INT16_MIN && dst.i16[3] == INT16_MIN,
+                "pmaddubsw covers exact negative minimum and negative overflow");
 }
 
 int main(void) {

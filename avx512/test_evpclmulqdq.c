@@ -24,16 +24,24 @@ typedef union {
     double f64[8];
 } zmm_t __attribute__((aligned(64)));
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_pclmul(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile ("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(1), "c"(0));
     return (ecx >> 1) & 1; /* PCLMULQDQ: CPUID.1.ECX[1] */
 }
+#else
+#define check_pclmul() 1
+#endif
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_vpclmulqdq(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile ("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
     return (ecx >> 10) & 1; /* VPCLMULQDQ: CPUID.7.ECX[10] */
 }
+#else
+#define check_vpclmulqdq() 1
+#endif
 
 /* Software carry-less multiply for verification */
 static void clmul_ref(uint64_t a, uint64_t b, uint64_t *lo, uint64_t *hi) {
@@ -108,6 +116,25 @@ int main(void) {
     TEST_ASSERT(dst.u64[0] == ref_lo, "VPCLMULQDQ hi*hi lo: %016llx", (unsigned long long)dst.u64[0]);
     TEST_ASSERT(dst.u64[1] == ref_hi, "VPCLMULQDQ hi*hi hi: %016llx", (unsigned long long)dst.u64[1]);
 
+    /* Cross selectors and ignored immediate bits. */
+    a.u64[0] = UINT64_C(0x8000000000000001);
+    a.u64[1] = UINT64_C(0xffffffffffffffff);
+    b.u64[0] = UINT64_C(0x0123456789abcdef);
+    b.u64[1] = UINT64_C(0x8000000000000000);
+#define TEST_VPCLMUL_SELECTOR(IMM, AI, BI) do { \
+        __asm__ volatile ("vmovdqu %1, %%xmm0\n\t" "vmovdqu %2, %%xmm1\n\t" \
+                          "vpclmulqdq $" #IMM ", %%xmm1, %%xmm0, %%xmm2\n\t" \
+                          "vmovdqu %%xmm2, %0" : "=m"(dst) : "m"(a), "m"(b) \
+                          : "xmm0","xmm1","xmm2"); \
+        clmul_ref(a.u64[(AI)], b.u64[(BI)], &ref_lo, &ref_hi); \
+        TEST_ASSERT(dst.u64[0] == ref_lo && dst.u64[1] == ref_hi, \
+                    "VPCLMULQDQ selector " #IMM " mismatch"); \
+    } while (0)
+    TEST_VPCLMUL_SELECTOR(0x01, 1, 0);
+    TEST_VPCLMUL_SELECTOR(0x10, 0, 1);
+    TEST_VPCLMUL_SELECTOR(0xff, 1, 1);
+#undef TEST_VPCLMUL_SELECTOR
+
     /* VPCLMULQDQ zmm (VPCLMULQDQ extension) */
     if (!check_vpclmulqdq()) {
         printf("VPCLMULQDQ (zmm) not supported, skipping zmm tests.\n");
@@ -119,6 +146,23 @@ int main(void) {
             zb.u64[i*2]   = 0x0123456789ABCDEFULL;
             zb.u64[i*2+1] = 0;
         }
+
+        /* Every 128-bit lane uses a distinct cross-source boundary vector. */
+        for (int i = 0; i < 4; i++) {
+            za.u64[i*2] = UINT64_C(0x8000000000000001) ^ (uint64_t)i;
+            za.u64[i*2+1] = UINT64_MAX - (uint64_t)i;
+            zb.u64[i*2] = UINT64_C(0x0123456789abcdef) + (uint64_t)i;
+            zb.u64[i*2+1] = UINT64_C(0x8000000000000000) >> i;
+        }
+        __asm__ volatile (
+            "vmovdqu64 %1, %%zmm0\n\t" "vmovdqu64 %2, %%zmm1\n\t"
+            "vpclmulqdq $0x10, %%zmm1, %%zmm0, %%zmm2\n\t" "vmovdqu64 %%zmm2, %0"
+            : "=m"(zdst) : "m"(za), "m"(zb) : "zmm0","zmm1","zmm2");
+        for (int i = 0; i < 4; i++) {
+            clmul_ref(za.u64[i*2], zb.u64[i*2+1], &ref_lo, &ref_hi);
+            TEST_ASSERT(zdst.u64[i*2] == ref_lo && zdst.u64[i*2+1] == ref_hi,
+                        "VPCLMULQDQ zmm cross selector lane %d", i);
+        }
         __asm__ volatile (
             "vmovdqu64 %1, %%zmm0\n\t"
             "vmovdqu64 %2, %%zmm1\n\t"
@@ -127,6 +171,7 @@ int main(void) {
             : "=m"(zdst) : "m"(za), "m"(zb) : "zmm0","zmm1","zmm2"
         );
         for (int i = 0; i < 4; i++) {
+            clmul_ref(za.u64[i*2], zb.u64[i*2], &ref_lo, &ref_hi);
             TEST_ASSERT(zdst.u64[i*2]   == ref_lo, "VPCLMULQDQ zmm lane%d lo: %016llx", i, (unsigned long long)zdst.u64[i*2]);
             TEST_ASSERT(zdst.u64[i*2+1] == ref_hi, "VPCLMULQDQ zmm lane%d hi: %016llx", i, (unsigned long long)zdst.u64[i*2+1]);
         }

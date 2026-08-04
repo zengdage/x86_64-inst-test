@@ -140,6 +140,33 @@ static void test_rsqrtps(void) {
     TEST_ASSERT(result.f32[3] == 0.0f, "rsqrtps 1/sqrt(inf)=0");
 }
 
+static void test_sqrtps_exact_nan_bits_and_invalid(void) {
+    xmm_t input = { .u32 = {
+        UINT32_C(0x80000000), UINT32_C(0x7f800000),
+        UINT32_C(0x7fc54321), UINT32_C(0x7f812345)
+    } };
+    xmm_t expected = { .u32 = {
+        UINT32_C(0x80000000), UINT32_C(0x7f800000),
+        UINT32_C(0x7fc54321), UINT32_C(0x7fc12345)
+    } };
+    xmm_t result;
+    uint32_t old_mxcsr, clean_mxcsr, after_mxcsr;
+
+    __asm__ volatile ("stmxcsr %0" : "=m"(old_mxcsr));
+    clean_mxcsr = old_mxcsr & ~UINT32_C(0x3f);
+    __asm__ volatile ("ldmxcsr %0" : : "m"(clean_mxcsr));
+    __asm__ volatile (
+        "sqrtps %1, %%xmm0\n\t"
+        "movdqa %%xmm0, %0"
+        : "=m"(result) : "m"(input) : "xmm0"
+    );
+    __asm__ volatile ("stmxcsr %0" : "=m"(after_mxcsr));
+    __asm__ volatile ("ldmxcsr %0" : : "m"(old_mxcsr));
+    TEST_ASSERT(memcmp(&result, &expected, sizeof(expected)) == 0,
+                "SQRTPS preserves -0/QNaN payload and quiets SNaN exactly");
+    TEST_ASSERT(after_mxcsr & 1, "SQRTPS SNaN sets MXCSR invalid flag");
+}
+
 int main(void) {
     TEST_START("SQRTPS/RCPPS/RSQRTPS instructions");
     test_sqrtps_basic();
@@ -149,5 +176,6 @@ int main(void) {
     test_rcpps();
     test_rcpps_negative();
     test_rsqrtps();
+    test_sqrtps_exact_nan_bits_and_invalid();
     TEST_END();
 }

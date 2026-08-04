@@ -77,12 +77,40 @@ static void test_vperm2i128_basic(void) {
     TEST_ASSERT(dst.i32[4] == 50, "vperm2i128 $31 high[4]: got %d", dst.i32[4]);
 }
 
+static void test_vperm2i128_all_lane_boundaries(void) {
+    ymm_t a = { .u32 = {0,1,2,3,4,5,6,7} };
+    ymm_t b = { .u32 = {10,11,12,13,14,15,16,17} };
+    ymm_t dst;
+
+    /* low=b.low (2), high=b.high (3): exact copy of b. */
+    __asm__ volatile (
+        "vmovdqu %1, %%ymm0\n\t" "vperm2i128 $0x32, %2, %%ymm0, %%ymm1\n\t"
+        "vmovdqu %%ymm1, %0" : "=m"(dst) : "m"(a), "m"(b) : "ymm0","ymm1");
+    for (int i = 0; i < 8; i++) TEST_ASSERT(dst.u32[i] == b.u32[i], "vperm2i128 source-b copy lane %d", i);
+
+    /* low=b.high (3), high=a.high (1). */
+    __asm__ volatile (
+        "vmovdqu %1, %%ymm0\n\t" "vperm2i128 $0x13, %2, %%ymm0, %%ymm1\n\t"
+        "vmovdqu %%ymm1, %0" : "=m"(dst) : "m"(a), "m"(b) : "ymm0","ymm1");
+    for (int i = 0; i < 4; i++) {
+        TEST_ASSERT(dst.u32[i] == b.u32[i + 4], "vperm2i128 b.high element %d", i);
+        TEST_ASSERT(dst.u32[i + 4] == a.u32[i + 4], "vperm2i128 a.high element %d", i);
+    }
+
+    /* Independent zero bits for both output lanes. */
+    __asm__ volatile (
+        "vmovdqu %1, %%ymm0\n\t" "vperm2i128 $0x88, %2, %%ymm0, %%ymm1\n\t"
+        "vmovdqu %%ymm1, %0" : "=m"(dst) : "m"(a), "m"(b) : "ymm0","ymm1");
+    for (int i = 0; i < 8; i++) TEST_ASSERT(dst.u32[i] == 0, "vperm2i128 both-zero lane %d", i);
+}
+
 int main(void) {
     TEST_START("VPERM2F128/VPERM2I128 instructions (AVX)");
     test_vperm2f128_identity();
     test_vperm2f128_swap();
     test_vperm2f128_zero_lane();
     test_vperm2i128_basic();
+    test_vperm2i128_all_lane_boundaries();
     __asm__ volatile ("vzeroupper");
     TEST_END();
 }

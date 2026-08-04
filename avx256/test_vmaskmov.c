@@ -7,13 +7,19 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #include "../common.h"
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx2(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__("cpuid" : "=a"(eax),"=b"(ebx),"=c"(ecx),"=d"(edx) : "a"(7),"c"(0));
     return (ebx >> 5) & 1;
 }
+#else
+#define check_avx2() 1
+#endif
 
 static void test_vmaskmovpd_load(void) {
     TEST_START("VMASKMOVPD load (256-bit)");
@@ -158,6 +164,30 @@ static void test_vpmaskmovq_store(void) {
     TEST_ASSERT(dst[3] == -4,   "vpmaskmovq store dst[3]=%lld (not written)", (long long)dst[3]);
 }
 
+static void test_maskmov_boundaries(void) {
+    float src[8] = {1,2,3,4,5,6,7,8}, dst[8];
+    uint32_t sign_masks[8] = {0x7fffffffu,0x80000000u,1,0xffffffffu,0,0x80000001u,0x40000000u,0x80000000u};
+    __asm__ volatile("vmovdqu %2,%%ymm0\n\tvmaskmovps %1,%%ymm0,%%ymm1\n\tvmovups %%ymm1,%0"
+        : "=m"(dst) : "m"(src), "m"(sign_masks) : "ymm0", "ymm1");
+    for (int i = 0; i < 8; i++) TEST_ASSERT(dst[i] == ((sign_masks[i] & 0x80000000u) ? src[i] : 0.0f), "vmaskmovps uses only sign bit lane %d", i);
+
+    long page_size = sysconf(_SC_PAGESIZE);
+    void *guard = mmap(NULL, (size_t)page_size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    TEST_ASSERT(guard != MAP_FAILED, "vmaskmov guard page allocation");
+    if (guard != MAP_FAILED) {
+        uint32_t zero_mask[8] = {0};
+        __asm__ volatile("vmovdqu %2,%%ymm0\n\tvmaskmovps %1,%%ymm0,%%ymm1\n\tvmovups %%ymm1,%0"
+            : "=m"(dst) : "m"(*(const char (*)[32])guard), "m"(zero_mask) : "ymm0", "ymm1");
+        for (int i = 0; i < 8; i++) TEST_ASSERT(dst[i] == 0.0f, "vmaskmovps zero mask invalid page lane %d", i);
+
+        int32_t store_src[8] = {1,2,3,4,5,6,7,8};
+        __asm__ volatile("vmovdqu %1,%%ymm0\n\tvmovdqu %2,%%ymm1\n\tvpmaskmovd %%ymm0,%%ymm1,%0"
+            : "=m"(*(char (*)[32])guard) : "m"(store_src), "m"(zero_mask) : "ymm0", "ymm1", "memory");
+        TEST_ASSERT(1, "vpmaskmovd zero-mask store suppresses invalid-address fault");
+        munmap(guard, (size_t)page_size);
+    }
+}
+
 int main(void) {
     if (!check_avx2()) { printf("AVX2 not supported\n"); return 1; }
     test_vmaskmovpd_load();
@@ -168,5 +198,6 @@ int main(void) {
     test_vpmaskmovd_store();
     test_vpmaskmovq_load();
     test_vpmaskmovq_store();
+    test_maskmov_boundaries();
     TEST_END();
 }

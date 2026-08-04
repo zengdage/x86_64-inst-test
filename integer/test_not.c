@@ -117,11 +117,45 @@ static void test_not_no_flags(void) {
                 flags_before & mask, flags_after & mask);
 }
 
+static void test_not_memory_widths_zero_extension_and_rich_flags(void) {
+    uint8_t m8 = UINT8_C(0x80);
+    uint16_t m16 = UINT16_C(0x8001);
+    uint32_t m32 = UINT32_C(0x80000001);
+    uint64_t m64 = UINT64_C(0x8000000000000001);
+    uint64_t result, before, after;
+
+    __asm__ volatile ("notb %0" : "+m"(m8));
+    __asm__ volatile ("notw %0" : "+m"(m16));
+    __asm__ volatile ("notl %0" : "+m"(m32));
+    __asm__ volatile ("notq %0" : "+m"(m64));
+    TEST_ASSERT(m8 == UINT8_C(0x7f), "notb memory boundary: %#x", m8);
+    TEST_ASSERT(m16 == UINT16_C(0x7ffe), "notw memory boundary: %#x", m16);
+    TEST_ASSERT(m32 == UINT32_C(0x7ffffffe), "notl memory boundary: %#x", m32);
+    TEST_ASSERT(m64 == UINT64_C(0x7ffffffffffffffe),
+                "notq memory boundary: %#" PRIx64, m64);
+
+    __asm__ volatile (
+        "movq $-1, %%rax\n\t"
+        "movq $0x8d5, %%r11\n\tpushq %%r11\n\tpopfq\n\t"
+        "pushfq\n\tpopq %1\n\t"
+        "notl %%eax\n\t"
+        "pushfq\n\tpopq %2\n\t"
+        "movq %%rax, %0"
+        : "=r"(result), "=&r"(before), "=&r"(after)
+        : : "rax", "r11", "cc"
+    );
+    TEST_ASSERT(result == 0, "notl all ones zero-extends RAX");
+    uint64_t mask = CF_FLAG | PF_FLAG | AF_FLAG | ZF_FLAG | SF_FLAG | OF_FLAG;
+    TEST_ASSERT((before & mask) == (after & mask),
+                "notl preserves rich status flag pattern");
+}
+
 int main(void) {
     TEST_START("NOT instruction");
     test_not_reg();
     test_not_sizes();
     test_not_mem();
     test_not_no_flags();
+    test_not_memory_widths_zero_extension_and_rich_flags();
     TEST_END();
 }

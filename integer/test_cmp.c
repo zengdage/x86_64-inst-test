@@ -9,6 +9,22 @@
  */
 #include "../common.h"
 
+static void assert_cmp_flags(uint64_t flags, int cf, int pf, int af,
+                             int zf, int sf, int of, const char *name) {
+    TEST_ASSERT(!!(flags & CF_FLAG) == cf, "%s CF=%d expected %d", name,
+                !!(flags & CF_FLAG), cf);
+    TEST_ASSERT(!!(flags & PF_FLAG) == pf, "%s PF=%d expected %d", name,
+                !!(flags & PF_FLAG), pf);
+    TEST_ASSERT(!!(flags & AF_FLAG) == af, "%s AF=%d expected %d", name,
+                !!(flags & AF_FLAG), af);
+    TEST_ASSERT(!!(flags & ZF_FLAG) == zf, "%s ZF=%d expected %d", name,
+                !!(flags & ZF_FLAG), zf);
+    TEST_ASSERT(!!(flags & SF_FLAG) == sf, "%s SF=%d expected %d", name,
+                !!(flags & SF_FLAG), sf);
+    TEST_ASSERT(!!(flags & OF_FLAG) == of, "%s OF=%d expected %d", name,
+                !!(flags & OF_FLAG), of);
+}
+
 static void test_cmp_equal(void) {
     uint64_t flags;
 
@@ -147,6 +163,57 @@ static void test_cmp_reg_mem(void) {
     TEST_ASSERT(flags & ZF_FLAG, "cmpq reg,mem: equal");
 }
 
+static void test_cmp_boundary_flag_matrix(void) {
+    uint64_t flags, value;
+    __asm__ volatile (
+        "xorl %%eax, %%eax\n\t"
+        "cmpb $1, %%al\n\t"
+        "pushfq\n\tpopq %0\n\t"
+        "movq %%rax, %1"
+        : "=r"(flags), "=r"(value) : : "rax", "cc");
+    TEST_ASSERT(value == 0, "cmpb immediate does not modify zero operand");
+    assert_cmp_flags(flags, 1, 1, 1, 0, 1, 0, "cmpb 0-1");
+
+    __asm__ volatile (
+        "movw $0x8000, %%ax\n\t"
+        "cmpw $1, %%ax\n\t"
+        "pushfq\n\tpopq %0\n\t"
+        "movzwq %%ax, %1"
+        : "=r"(flags), "=r"(value) : : "rax", "cc");
+    TEST_ASSERT(value == UINT16_C(0x8000),
+                "cmpw immediate preserves INT16_MIN operand");
+    assert_cmp_flags(flags, 0, 1, 1, 0, 0, 1,
+                     "cmpw INT16_MIN-1");
+
+    uint32_t left32, right32;
+    __asm__ volatile (
+        "movl $-1, %%eax\n\t"
+        "movl $-1, %%ecx\n\t"
+        "cmpl %%ecx, %%eax\n\t"
+        "pushfq\n\tpopq %0\n\t"
+        "movl %%eax, %1\n\t"
+        "movl %%ecx, %2"
+        : "=r"(flags), "=r"(left32), "=r"(right32)
+        : : "rax", "rcx", "cc");
+    TEST_ASSERT(left32 == UINT32_MAX && right32 == UINT32_MAX,
+                "cmpl register form preserves both all-ones operands");
+    assert_cmp_flags(flags, 0, 1, 0, 1, 0, 0,
+                     "cmpl UINT32_MAX-UINT32_MAX");
+
+    uint64_t memory = UINT64_MAX;
+    __asm__ volatile (
+        "movabsq $0x7fffffffffffffff, %%rax\n\t"
+        "cmpq %2, %%rax\n\t"
+        "pushfq\n\tpopq %0\n\t"
+        "movq %%rax, %1"
+        : "=r"(flags), "=r"(value)
+        : "m"(memory) : "rax", "cc");
+    TEST_ASSERT(value == INT64_MAX && memory == UINT64_MAX,
+                "cmpq memory form preserves signed-max/all-ones operands");
+    assert_cmp_flags(flags, 1, 1, 0, 0, 1, 1,
+                     "cmpq INT64_MAX-(-1)");
+}
+
 int main(void) {
     TEST_START("CMP instruction");
     test_cmp_equal();
@@ -155,5 +222,6 @@ int main(void) {
     test_cmp_signed();
     test_cmp_sizes();
     test_cmp_reg_mem();
+    test_cmp_boundary_flag_matrix();
     TEST_END();
 }

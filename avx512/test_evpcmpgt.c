@@ -24,11 +24,15 @@ typedef union {
     double f64[8];
 } zmm_t __attribute__((aligned(64)));
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx512(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile ("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
     return ((ebx >> 16) & 1) && ((ebx >> 30) & 1);
 }
+#else
+#define check_avx512() 1
+#endif
 
 int main(void) {
     if (!check_avx512()) {
@@ -106,6 +110,54 @@ int main(void) {
         : "=r"(kmask) : "m"(a), "m"(b) : "zmm0","zmm1","k1"
     );
     TEST_ASSERT((kmask & 0xFFFFFFFF) == 0x0000FFFF, "VPCMPGTW lower16-greater: mask=%08llx", (unsigned long long)kmask);
+
+    /* Signed extrema, endpoint result bits, writemask zeroing, and exact
+       architectural mask width for every element size. */
+#define TEST_CMPGT_MASK_BOUNDARY(FIELD, MOVE, INSN, LANES, MINVAL, MAXVAL, VALID, ENDPOINTS) do { \
+        uint64_t gate; \
+        for (int i = 0; i < (LANES); i++) { a.FIELD[i] = 0; b.FIELD[i] = 0; } \
+        a.FIELD[0] = (MAXVAL); b.FIELD[0] = (MINVAL); \
+        a.FIELD[(LANES) - 1] = (MAXVAL); b.FIELD[(LANES) - 1] = (MINVAL); \
+        __asm__ volatile ( \
+            "kxnorq %%k1,%%k1,%%k1\n\t" MOVE " %1,%%zmm0\n\t" \
+            MOVE " %2,%%zmm1\n\t" INSN " %%zmm1,%%zmm0,%%k1\n\t" \
+            "kmovq %%k1,%0" \
+            : "=r"(kmask) : "m"(a), "m"(b) : "zmm0", "zmm1", "k1"); \
+        TEST_ASSERT(kmask == (ENDPOINTS), \
+                    INSN " signed extrema endpoints/high-bit clearing: %016llx", \
+                    (unsigned long long)kmask); \
+        for (int i = 0; i < (LANES); i++) { a.FIELD[i] = (MAXVAL); b.FIELD[i] = (MINVAL); } \
+        gate = 0; \
+        __asm__ volatile ( \
+            "kxnorq %%k1,%%k1,%%k1\n\tkmovq %3,%%k2\n\t" \
+            MOVE " %1,%%zmm0\n\t" MOVE " %2,%%zmm1\n\t" \
+            INSN " %%zmm1,%%zmm0,%%k1%{%%k2%}\n\tkmovq %%k1,%0" \
+            : "=r"(kmask) : "m"(a), "m"(b), "r"(gate) \
+            : "zmm0", "zmm1", "k1", "k2"); \
+        TEST_ASSERT(kmask == 0, INSN " k=0 clears the complete result mask"); \
+        gate = (VALID); \
+        __asm__ volatile ( \
+            "kxnorq %%k1,%%k1,%%k1\n\tkmovq %3,%%k2\n\t" \
+            MOVE " %1,%%zmm0\n\t" MOVE " %2,%%zmm1\n\t" \
+            INSN " %%zmm1,%%zmm0,%%k1%{%%k2%}\n\tkmovq %%k1,%0" \
+            : "=r"(kmask) : "m"(a), "m"(b), "r"(gate) \
+            : "zmm0", "zmm1", "k1", "k2"); \
+        TEST_ASSERT(kmask == (VALID), INSN " k=all exact valid mask width: %016llx", \
+                    (unsigned long long)kmask); \
+    } while (0)
+    TEST_CMPGT_MASK_BOUNDARY(i8,  "vmovdqu8",  "vpcmpgtb", 64,
+                             INT8_MIN, INT8_MAX, UINT64_MAX,
+                             UINT64_C(0x8000000000000001));
+    TEST_CMPGT_MASK_BOUNDARY(i16, "vmovdqu16", "vpcmpgtw", 32,
+                             INT16_MIN, INT16_MAX, UINT64_C(0xffffffff),
+                             UINT64_C(0x80000001));
+    TEST_CMPGT_MASK_BOUNDARY(i32, "vmovdqu32", "vpcmpgtd", 16,
+                             INT32_MIN, INT32_MAX, UINT64_C(0xffff),
+                             UINT64_C(0x8001));
+    TEST_CMPGT_MASK_BOUNDARY(i64, "vmovdqu64", "vpcmpgtq", 8,
+                             INT64_MIN, INT64_MAX, UINT64_C(0xff),
+                             UINT64_C(0x81));
+#undef TEST_CMPGT_MASK_BOUNDARY
 
     TEST_END();
 }

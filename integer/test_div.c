@@ -11,6 +11,17 @@
  * Note: Do not use static linking.
  */
 #include "../common.h"
+#include <setjmp.h>
+#include <signal.h>
+
+static sigjmp_buf div_jmpbuf;
+static volatile sig_atomic_t got_sigfpe;
+
+static void div_sigfpe_handler(int sig) {
+    (void)sig;
+    got_sigfpe = 1;
+    siglongjmp(div_jmpbuf, 1);
+}
 
 static void test_div_8bit(void) {
     uint8_t quot, rem;
@@ -142,11 +153,92 @@ static void test_div_mem(void) {
     TEST_ASSERT(rem == 3, "divq mem: 123/10 remainder expected 3");
 }
 
+static void test_div_boundaries(void) {
+    uint64_t quot, rem;
+
+    /* Largest 128-bit dividend whose quotient still fits in 64 bits. */
+    __asm__ volatile (
+        "movq $-1, %%rax\n\t"
+        "movq $1, %%rdx\n\t"
+        "movq $2, %%rcx\n\t"
+        "divq %%rcx\n\t"
+        "movq %%rax, %0\n\t"
+        "movq %%rdx, %1"
+        : "=r"(quot), "=r"(rem)
+        :
+        : "rax", "rcx", "rdx", "cc"
+    );
+    TEST_ASSERT(quot == UINT64_MAX, "divq max fitting quotient: expected UINT64_MAX");
+    TEST_ASSERT(rem == 1, "divq max fitting quotient: expected remainder 1");
+
+    /* The equivalent quotient/remainder boundary for DIVB. */
+    {
+        uint8_t q8, r8;
+        __asm__ volatile (
+            "movw $0xfeff, %%ax\n\t"  /* 255 * 255 + 254 */
+            "movb $0xff, %%cl\n\t"
+            "divb %%cl\n\t"
+            "movb %%al, %0\n\t"
+            "movb %%ah, %1"
+            : "=r"(q8), "=r"(r8)
+            :
+            : "rax", "rcx", "cc"
+        );
+        TEST_ASSERT(q8 == UINT8_MAX, "divb max fitting quotient: expected 255");
+        TEST_ASSERT(r8 == UINT8_MAX - 1, "divb max fitting remainder: expected 254");
+    }
+}
+
+static void test_div_errors(void) {
+    struct sigaction sa, old_sa;
+
+    sa.sa_handler = div_sigfpe_handler;
+    sigemptyset(&sa.sa_mask);
+    sa.sa_flags = 0;
+    sigaction(SIGFPE, &sa, &old_sa);
+
+    got_sigfpe = 0;
+    if (sigsetjmp(div_jmpbuf, 1) == 0) {
+        __asm__ volatile (
+            "xorq %%rax, %%rax\n\t"
+            "xorq %%rdx, %%rdx\n\t"
+            "xorq %%rcx, %%rcx\n\t"
+            "divq %%rcx"
+            :
+            :
+            : "rax", "rcx", "rdx", "cc"
+        );
+        TEST_ASSERT(0, "divq by zero should generate SIGFPE");
+    } else {
+        TEST_ASSERT(got_sigfpe, "divq by zero generated SIGFPE");
+    }
+
+    got_sigfpe = 0;
+    if (sigsetjmp(div_jmpbuf, 1) == 0) {
+        __asm__ volatile (
+            "xorq %%rax, %%rax\n\t"
+            "movq $1, %%rdx\n\t"    /* 2^64 / 1 cannot fit in RAX */
+            "movq $1, %%rcx\n\t"
+            "divq %%rcx"
+            :
+            :
+            : "rax", "rcx", "rdx", "cc"
+        );
+        TEST_ASSERT(0, "divq quotient overflow should generate SIGFPE");
+    } else {
+        TEST_ASSERT(got_sigfpe, "divq quotient overflow generated SIGFPE");
+    }
+
+    sigaction(SIGFPE, &old_sa, NULL);
+}
+
 int main(void) {
     TEST_START("DIV instruction");
     test_div_8bit();
     test_div_32bit();
     test_div_64bit();
     test_div_mem();
+    test_div_boundaries();
+    test_div_errors();
     TEST_END();
 }

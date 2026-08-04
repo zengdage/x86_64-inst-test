@@ -83,6 +83,14 @@ static void test_sha1rnds4_rounds(void) {
     /* Output should differ from input */
     TEST_ASSERT(memcmp(&result0, &state, 16) != 0,
                 "sha1rnds4: output differs from input state");
+    const xmm_t expected0 = { .u32 = {0xf6f86db0,0x38b9e962,0xca055093,0x931064b4} };
+    const xmm_t expected1 = { .u32 = {0xafb0dbb3,0xf6e1abc2,0x154bf706,0x423373bd} };
+    const xmm_t expected2 = { .u32 = {0x841ebe81,0x8aa82f3d,0xd5e1a361,0x4fd450b8} };
+    const xmm_t expected3 = { .u32 = {0xc6931140,0x2a0a92f3,0xa0d57f8a,0x186e3058} };
+    TEST_ASSERT(memcmp(&result0, &expected0, 16) == 0, "sha1rnds4 function 0 golden output");
+    TEST_ASSERT(memcmp(&result1, &expected1, 16) == 0, "sha1rnds4 function 1 golden output");
+    TEST_ASSERT(memcmp(&result2, &expected2, 16) == 0, "sha1rnds4 function 2 golden output");
+    TEST_ASSERT(memcmp(&result3, &expected3, 16) == 0, "sha1rnds4 function 3 golden output");
 }
 
 /* Test SHA1RNDS4 determinism */
@@ -113,6 +121,28 @@ static void test_sha1rnds4_deterministic(void) {
 
     TEST_ASSERT(memcmp(&result1, &result2, 16) == 0,
                 "sha1rnds4: deterministic");
+}
+
+static void test_sha1rnds4_high_immediate_bits(void) {
+    xmm_t state = { .u32 = {0x10325476, 0x98badcfe, 0xefcdab89, 0x67452301} };
+    xmm_t msg = { .u32 = {0x80000000, 0, 0, 0} };
+    xmm_t r3, rff;
+
+    /* SHA1RNDS4 selects one of four functions with imm8[1:0]. */
+    __asm__ volatile (
+        "movdqu %2, %%xmm0\n\t"
+        "movdqu %3, %%xmm1\n\t"
+        "movdqa %%xmm0, %%xmm2\n\t"
+        "sha1rnds4 $3, %%xmm1, %%xmm0\n\t"
+        "sha1rnds4 $0xff, %%xmm1, %%xmm2\n\t"
+        "movdqu %%xmm0, %0\n\t"
+        "movdqu %%xmm2, %1"
+        : "=m"(r3), "=m"(rff)
+        : "m"(state), "m"(msg)
+        : "xmm0", "xmm1", "xmm2"
+    );
+    TEST_ASSERT(memcmp(&r3, &rff, sizeof(r3)) == 0,
+                "sha1rnds4 imm=0xff: high immediate bits ignored");
 }
 
 /* Test SHA1RNDS4 xmm, mem */
@@ -162,6 +192,8 @@ static void test_sha1msg1(void) {
 
     TEST_ASSERT(memcmp(&result, &w0_3, 16) != 0,
                 "sha1msg1: output differs from input");
+    const xmm_t expected = { .u32 = {0x18185355,0x5755535d,0x08080808,0x08080818} };
+    TEST_ASSERT(memcmp(&result, &expected, 16) == 0, "sha1msg1 golden output");
 
     /* Test determinism */
     xmm_t result2;
@@ -225,6 +257,8 @@ static void test_sha1msg2(void) {
 
     TEST_ASSERT(memcmp(&result, &a, 16) != 0,
                 "sha1msg2: output differs from input");
+    const xmm_t expected = { .u32 = {0x0ace9345,0x602ce8b4,0x68ace025,0x97531fda} };
+    TEST_ASSERT(memcmp(&result, &expected, 16) == 0, "sha1msg2 golden output");
 
     /* Determinism */
     xmm_t result2;
@@ -291,6 +325,8 @@ static void test_sha1nexte(void) {
     TEST_ASSERT(result.u32[0] == b.u32[0], "sha1nexte: dword0 from src2");
     TEST_ASSERT(result.u32[1] == b.u32[1], "sha1nexte: dword1 from src2");
     TEST_ASSERT(result.u32[2] == b.u32[2], "sha1nexte: dword2 from src2");
+    const xmm_t expected = { .u32 = {0xaaaaaaaa,0xbbbbbbbb,0xcccccccc,0x61ea72fa} };
+    TEST_ASSERT(memcmp(&result, &expected, 16) == 0, "sha1nexte golden output");
 
     /* Determinism */
     xmm_t result2;
@@ -340,6 +376,7 @@ int main(void) {
     TEST_START("SHA1 instructions (SHA1RNDS4/SHA1MSG1/SHA1MSG2/SHA1NEXTE)");
     test_sha1rnds4_rounds();
     test_sha1rnds4_deterministic();
+    test_sha1rnds4_high_immediate_bits();
     test_sha1rnds4_mem();
     test_sha1msg1();
     test_sha1msg1_mem();

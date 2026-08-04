@@ -204,6 +204,59 @@ static void test_shift_zero(void) {
     TEST_ASSERT(result == 42, "shlq by 0: unchanged");
 }
 
+static void test_shift_count_boundaries(void) {
+    uint64_t result;
+    uint64_t flags;
+    uint8_t r8;
+
+    /* 64-bit counts are masked to six bits. */
+    __asm__ volatile (
+        "stc\n\t"
+        "movq $0x1234, %%rax\n\t"
+        "shlq $64, %%rax\n\t"
+        "movq %%rax, %0\n\t"
+        "pushfq\n\t"
+        "popq %1"
+        : "=r"(result), "=r"(flags)
+        :
+        : "rax", "cc"
+    );
+    TEST_ASSERT(result == UINT64_C(0x1234), "shlq count=64: value unchanged");
+    TEST_ASSERT(flags & CF_FLAG, "shlq effective count 0: CF preserved");
+
+    __asm__ volatile (
+        "movq $1, %%rax\n\t"
+        "shlq $65, %%rax\n\t"
+        "movq %%rax, %0"
+        : "=r"(result)
+        :
+        : "rax", "cc"
+    );
+    TEST_ASSERT(result == 2, "shlq count=65: expected effective count 1");
+
+    __asm__ volatile (
+        "movq $0x8000000000000000, %%rax\n\t"
+        "movb $0xff, %%cl\n\t"
+        "shrq %%cl, %%rax\n\t"
+        "movq %%rax, %0"
+        : "=r"(result)
+        :
+        : "rax", "rcx", "cc"
+    );
+    TEST_ASSERT(result == 1, "shrq CL=255: expected effective count 63");
+
+    /* For byte operands, count 8 is not reduced modulo the operand width. */
+    __asm__ volatile (
+        "movb $0xff, %%al\n\t"
+        "shlb $8, %%al\n\t"
+        "movb %%al, %0"
+        : "=r"(r8)
+        :
+        : "rax", "cc"
+    );
+    TEST_ASSERT(r8 == 0, "shlb count=8: all bits shifted out");
+}
+
 int main(void) {
     TEST_START("SHL/SHR/SAL/SAR instructions");
     test_shl();
@@ -211,5 +264,6 @@ int main(void) {
     test_sar();
     test_shift_sizes();
     test_shift_zero();
+    test_shift_count_boundaries();
     TEST_END();
 }

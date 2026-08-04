@@ -110,6 +110,44 @@ static void test_bzhi_various(void) {
     TEST_ASSERT(result == 0x0, "bzhiq index=4 of 0x...F0: expected 0x0, got 0x%lx", result);
 }
 
+static void test_bzhi_boundaries(void) {
+    uint64_t result;
+    uint64_t flags;
+
+    /* Last masking position: keep bits 0..62 and clear only bit 63. */
+    __asm__ volatile (
+        "movq $-1, %%rax\n\t"
+        "movq $63, %%rbx\n\t"
+        "bzhiq %%rbx, %%rax, %%rcx\n\t"
+        "movq %%rcx, %0\n\t"
+        "pushfq\n\t"
+        "popq %1"
+        : "=r"(result), "=r"(flags)
+        :
+        : "rax", "rbx", "rcx", "cc"
+    );
+    TEST_ASSERT(result == UINT64_C(0x7fffffffffffffff),
+                "bzhiq index=63: expected INT64_MAX mask");
+    TEST_ASSERT(!(flags & CF_FLAG), "bzhiq index=63: CF should be clear");
+    TEST_ASSERT(!(flags & SF_FLAG), "bzhiq index=63: SF should be clear");
+
+    /* One beyond the width leaves the source unchanged and reports CF. */
+    __asm__ volatile (
+        "movq $-1, %%rax\n\t"
+        "movq $65, %%rbx\n\t"
+        "bzhiq %%rbx, %%rax, %%rcx\n\t"
+        "movq %%rcx, %0\n\t"
+        "pushfq\n\t"
+        "popq %1"
+        : "=r"(result), "=r"(flags)
+        :
+        : "rax", "rbx", "rcx", "cc"
+    );
+    TEST_ASSERT(result == UINT64_MAX, "bzhiq index=65: source should be unchanged");
+    TEST_ASSERT(flags & CF_FLAG, "bzhiq index=65: CF should be set");
+    TEST_ASSERT(flags & SF_FLAG, "bzhiq index=65 with all ones: SF should be set");
+}
+
 int main(void) {
     TEST_START("BZHI instruction (BMI2)");
     test_bzhi_basic();
@@ -117,5 +155,6 @@ int main(void) {
     test_bzhi_full();
     test_bzhi_32bit();
     test_bzhi_various();
+    test_bzhi_boundaries();
     TEST_END();
 }

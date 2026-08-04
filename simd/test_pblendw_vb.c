@@ -59,10 +59,12 @@ static void test_pblendw_mixed(void) {
         "movdqa %%xmm0, %0"
         : "=m"(dst) : "m"(a), "m"(b) : "xmm0"
     );
-    TEST_ASSERT(dst.u16[0] == 1, "pblendw $AA [0] from dest: got %u", dst.u16[0]);
-    TEST_ASSERT(dst.u16[1] == 20, "pblendw $AA [1] from src: got %u", dst.u16[1]);
-    TEST_ASSERT(dst.u16[2] == 3, "pblendw $AA [2] from dest: got %u", dst.u16[2]);
-    TEST_ASSERT(dst.u16[3] == 40, "pblendw $AA [3] from src: got %u", dst.u16[3]);
+    for (int i = 0; i < 8; i++) {
+        uint16_t expected = (i & 1) ? b.u16[i] : a.u16[i];
+        TEST_ASSERT(dst.u16[i] == expected,
+                    "pblendw $AA lane %d including endpoint lanes: expected %u, got %u",
+                    i, expected, dst.u16[i]);
+    }
 }
 
 static void test_pblendvb_all_from_src(void) {
@@ -86,10 +88,20 @@ static void test_pblendvb_all_from_src(void) {
 }
 
 static void test_pblendvb_mixed(void) {
-    xmm_t a = { .u8 = {1,2,3,4, 0,0,0,0, 0,0,0,0, 0,0,0,0} };
-    xmm_t b = { .u8 = {10,20,30,40, 0,0,0,0, 0,0,0,0, 0,0,0,0} };
-    xmm_t mask = { .u8 = {0x80, 0x00, 0x80, 0x00, 0,0,0,0, 0,0,0,0, 0,0,0,0} };
+    xmm_t a, b, mask;
     xmm_t dst;
+
+    for (int i = 0; i < 16; i++) {
+        a.u8[i] = (uint8_t)(i + 1);
+        b.u8[i] = (uint8_t)(0x80 + i);
+        switch (i & 3) {
+        case 0: mask.u8[i] = 0x80; break;
+        case 1: mask.u8[i] = 0x7f; break;
+        case 2: mask.u8[i] = 0xff; break;
+        default: mask.u8[i] = 0x01; break;
+        }
+    }
+    mask.u8[15] = 0x80;
 
     __asm__ volatile (
         "movdqa %3, %%xmm0\n\t"
@@ -98,10 +110,12 @@ static void test_pblendvb_mixed(void) {
         "movdqa %%xmm1, %0"
         : "=m"(dst) : "m"(a), "m"(b), "m"(mask) : "xmm0", "xmm1"
     );
-    TEST_ASSERT(dst.u8[0] == 10, "pblendvb mixed [0] from src: got %u", dst.u8[0]);
-    TEST_ASSERT(dst.u8[1] == 2, "pblendvb mixed [1] from dest: got %u", dst.u8[1]);
-    TEST_ASSERT(dst.u8[2] == 30, "pblendvb mixed [2] from src: got %u", dst.u8[2]);
-    TEST_ASSERT(dst.u8[3] == 4, "pblendvb mixed [3] from dest: got %u", dst.u8[3]);
+    for (int i = 0; i < 16; i++) {
+        uint8_t expected = (mask.u8[i] & 0x80) ? b.u8[i] : a.u8[i];
+        TEST_ASSERT(dst.u8[i] == expected,
+                    "pblendvb uses only mask MSB lane %d (mask=%#x): expected %u, got %u",
+                    i, mask.u8[i], expected, dst.u8[i]);
+    }
 }
 
 int main(void) {

@@ -9,6 +9,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <limits.h>
 #include "../common.h"
 
 typedef union {
@@ -24,11 +25,15 @@ typedef union {
     double f64[8];
 } zmm_t __attribute__((aligned(64)));
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx512(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile ("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
     return ((ebx >> 16) & 1) && ((ebx >> 30) & 1);
 }
+#else
+#define check_avx512() 1
+#endif
 
 int main(void) {
     if (!check_avx512()) {
@@ -128,6 +133,91 @@ int main(void) {
     );
     for (int i = 0; i < 32; i++)
         TEST_ASSERT(dst.i16[i] == 0, "VPMULLW zero-mul lane %d: %d", i, dst.i16[i]);
+
+    /* Exact low/high product boundaries. */
+    for (int i = 0; i < 32; i++) {
+        a.i16[i] = (i & 1) ? INT16_MIN : -1;
+        b.i16[i] = (i & 1) ? -1 : INT16_MIN;
+    }
+    __asm__ volatile (
+        "vmovdqu16 %1, %%zmm0\n\t"
+        "vmovdqu16 %2, %%zmm1\n\t"
+        "vpmullw %%zmm1, %%zmm0, %%zmm2\n\t"
+        "vmovdqu16 %%zmm2, %0"
+        : "=m"(dst) : "m"(a), "m"(b)
+        : "zmm0","zmm1","zmm2"
+    );
+    for (int i = 0; i < 32; i++)
+        TEST_ASSERT(dst.u16[i] == UINT16_C(0x8000),
+                    "VPMULLW INT16_MIN*-1 lane %d: %04x", i, dst.u16[i]);
+    /* Re-run VPMULHW because dst above contains the low product. */
+    __asm__ volatile (
+        "vmovdqu16 %1, %%zmm0\n\t"
+        "vmovdqu16 %2, %%zmm1\n\t"
+        "vpmulhw %%zmm1, %%zmm0, %%zmm2\n\t"
+        "vmovdqu16 %%zmm2, %0"
+        : "=m"(dst) : "m"(a), "m"(b) : "zmm0","zmm1","zmm2"
+    );
+    for (int i = 0; i < 32; i++)
+        TEST_ASSERT(dst.i16[i] == 0,
+                    "VPMULHW INT16_MIN*-1 lane %d: %d", i, dst.i16[i]);
+
+    for (int i = 0; i < 32; i++) a.u16[i] = b.u16[i] = UINT16_MAX;
+    __asm__ volatile (
+        "vmovdqu16 %1, %%zmm0\n\t"
+        "vmovdqu16 %2, %%zmm1\n\t"
+        "vpmulhuw %%zmm1, %%zmm0, %%zmm2\n\t"
+        "vmovdqu16 %%zmm2, %0"
+        : "=m"(dst) : "m"(a), "m"(b) : "zmm0","zmm1","zmm2"
+    );
+    for (int i = 0; i < 32; i++)
+        TEST_ASSERT(dst.u16[i] == UINT16_C(0xfffe),
+                    "VPMULHUW ffff*ffff lane %d: %04x", i, dst.u16[i]);
+
+    for (int i = 0; i < 16; i++) a.u32[i] = b.u32[i] = UINT32_MAX;
+    __asm__ volatile (
+        "vmovdqu32 %1, %%zmm0\n\t"
+        "vmovdqu32 %2, %%zmm1\n\t"
+        "vpmuludq %%zmm1, %%zmm0, %%zmm2\n\t"
+        "vmovdqu64 %%zmm2, %0"
+        : "=m"(dst) : "m"(a), "m"(b) : "zmm0","zmm1","zmm2"
+    );
+    for (int i = 0; i < 8; i++)
+        TEST_ASSERT(dst.u64[i] == UINT64_C(0xfffffffe00000001),
+                    "VPMULUDQ max lane %d: %016llx", i,
+                    (unsigned long long)dst.u64[i]);
+
+    for (int i = 0; i < 32; i++) a.i16[i] = b.i16[i] = INT16_MIN;
+    __asm__ volatile (
+        "vmovdqu16 %1, %%zmm0\n\t"
+        "vmovdqu16 %2, %%zmm1\n\t"
+        "vpmaddwd %%zmm1, %%zmm0, %%zmm2\n\t"
+        "vmovdqu32 %%zmm2, %0"
+        : "=m"(dst) : "m"(a), "m"(b) : "zmm0","zmm1","zmm2"
+    );
+    for (int i = 0; i < 16; i++)
+        TEST_ASSERT(dst.u32[i] == UINT32_C(0x80000000),
+                    "VPMADDWD unique overflow lane %d: %08x", i, dst.u32[i]);
+
+    /* Empty zero mask and endpoint-only merge mask. */
+    memset(&dst, 0xa5, sizeof(dst));
+    uint32_t word_mask = UINT32_C(0x80000001);
+    for (int i = 0; i < 32; i++) { a.i16[i] = 3; b.i16[i] = 7; }
+    __asm__ volatile (
+        "kmovd %3, %%k1\n\t"
+        "vmovdqu16 %0, %%zmm2\n\t"
+        "vmovdqu16 %1, %%zmm0\n\t"
+        "vmovdqu16 %2, %%zmm1\n\t"
+        "vpmullw %%zmm1, %%zmm0, %%zmm2%{%%k1%}\n\t"
+        "vmovdqu16 %%zmm2, %0"
+        : "+m"(dst) : "m"(a), "m"(b), "r"(word_mask)
+        : "zmm0","zmm1","zmm2","k1"
+    );
+    for (int i = 0; i < 32; i++) {
+        uint16_t expected = ((word_mask >> i) & 1U) ? 21U : UINT16_C(0xa5a5);
+        TEST_ASSERT(dst.u16[i] == expected,
+                    "VPMULLW merge endpoint mask lane %d: %04x", i, dst.u16[i]);
+    }
 
     TEST_END();
 }

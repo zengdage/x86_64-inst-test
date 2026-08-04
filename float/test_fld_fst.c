@@ -240,11 +240,43 @@ static void test_fld_st(void) {
     TEST_ASSERT(out2 == 20.0, "remaining st after fld st(1): got %f, expected 20.0", out2);
 }
 
+static void test_fld_fst_exact_extended_and_snan(void) {
+    long double values[] = {
+        -0.0L,
+        0x1p-16445L,
+        0x1.fffffffffffffffep+16383L,
+        __builtin_nanl("0x1234")
+    };
+    for (unsigned i = 0; i < sizeof(values) / sizeof(values[0]); i++) {
+        long double result;
+        memset(&result, 0, sizeof(result));
+        __asm__ volatile("fldt %1\n\tfstpt %0" : "=m"(result) : "m"(values[i]));
+        TEST_ASSERT(memcmp(&result, &values[i], 10) == 0,
+                    "fldt/fstpt exact 80-bit roundtrip case %u", i);
+    }
+
+    uint64_t snan_bits = UINT64_C(0x7ff0000000001234);
+    uint64_t result_bits;
+    double snan, result;
+    uint16_t status;
+    memcpy(&snan, &snan_bits, sizeof(snan));
+    __asm__ volatile (
+        "fnclex\n\tfldl %2\n\tfstpl %0\n\tfnstsw %1"
+        : "=m"(result), "=m"(status) : "m"(snan) : "memory"
+    );
+    memcpy(&result_bits, &result, sizeof(result_bits));
+    TEST_ASSERT(result_bits == UINT64_C(0x7ff8000000001234),
+                "fld/fstp quiets double SNaN with exact payload");
+    TEST_ASSERT(status & 1, "fld/fstp SNaN sets invalid status");
+    __asm__ volatile("fnclex");
+}
+
 int main(void) {
     TEST_START("FLD/FST/FSTP instructions");
     test_fld_fst_float();
     test_fld_fst_double();
     test_fld_fst_long_double();
     test_fld_st();
+    test_fld_fst_exact_extended_and_snan();
     TEST_END();
 }

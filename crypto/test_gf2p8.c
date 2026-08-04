@@ -19,6 +19,7 @@
  * Note: Do not use static linking.
  */
 #include "../common.h"
+#include "gfni_ref.h"
 
 /* Test GF2P8MULB with identity: x * 1 = x */
 static void test_gf2p8mulb_identity(void) {
@@ -280,6 +281,12 @@ static void test_gf2p8affineinvqb(void) {
     /* Inverse of 1 is 1 in any field */
     TEST_ASSERT(result.u8[0] == 0x01,
                 "gf2p8affineinvqb: inv(0x01) = 0x%02x (expected 0x01)", result.u8[0]);
+    for (int i = 0; i < 16; i++) {
+        uint8_t expected = gfni_inverse_reference(data.u8[i]);
+        TEST_ASSERT(result.u8[i] == expected,
+                    "gf2p8affineinvqb scalar inverse lane %d: %02x != %02x",
+                    i, result.u8[i], expected);
+    }
     /* Inverse of 0 is defined as 0 in AES convention */
     /* Test byte 0 of second qword for another value */
 
@@ -399,6 +406,10 @@ static void test_gf2p8affineinvqb_inverse_verify(void) {
     }
     TEST_ASSERT(all_one,
                 "gf2p8: x * inv(x) = 1 for all non-zero x (bytes 1-15)");
+
+    for (int i = 0; i < 16; i++)
+        TEST_ASSERT(inverse.u8[i] == gfni_inverse_reference(data.u8[i]),
+                    "gf2p8 inverse independent oracle lane %d", i);
 }
 
 int main(void) {

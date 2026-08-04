@@ -226,11 +226,54 @@ static void test_maxsd_mem(void) {
     TEST_ASSERT(result.f64[1] == 50.0, "maxsd xmm,mem upper preserved");
 }
 
+static void test_minmaxsd_exact_bits_upper_lane_and_snan(void) {
+    xmm_t a = { .u64 = {
+        UINT64_C(0x3ff0000000000000), UINT64_C(0xfff8123456789abc)
+    } };
+    xmm_t b = { .u64 = {
+        UINT64_C(0x7ff0000000001234), UINT64_C(0x1111222233334444)
+    } };
+    xmm_t min_result, max_result, expected = a;
+    uint32_t old_mxcsr, clean_mxcsr, after_mxcsr;
+    expected.u64[0] = b.u64[0];
+
+    __asm__ volatile ("stmxcsr %0" : "=m"(old_mxcsr));
+    clean_mxcsr = old_mxcsr & ~UINT32_C(0x3f);
+    __asm__ volatile ("ldmxcsr %0" : : "m"(clean_mxcsr));
+    __asm__ volatile (
+        "movapd %2, %%xmm0\n\tminsd %3, %%xmm0\n\tmovapd %%xmm0, %0\n\t"
+        "movapd %2, %%xmm0\n\tmaxsd %3, %%xmm0\n\tmovapd %%xmm0, %1"
+        : "=m"(min_result), "=m"(max_result) : "m"(a), "m"(b) : "xmm0"
+    );
+    __asm__ volatile ("stmxcsr %0" : "=m"(after_mxcsr));
+    __asm__ volatile ("ldmxcsr %0" : : "m"(old_mxcsr));
+    TEST_ASSERT(memcmp(&min_result, &expected, sizeof(expected)) == 0,
+                "MINSD exact SNaN source and destination upper lane");
+    TEST_ASSERT(memcmp(&max_result, &expected, sizeof(expected)) == 0,
+                "MAXSD exact SNaN source and destination upper lane");
+    TEST_ASSERT(after_mxcsr & 1, "MINSD/MAXSD SNaN sets MXCSR invalid flag");
+
+    a.u64[0] = UINT64_C(0x8000000000000000);
+    b.u64[0] = UINT64_C(0x0000000000000000);
+    expected = a;
+    expected.u64[0] = b.u64[0];
+    __asm__ volatile (
+        "movapd %2, %%xmm0\n\tminsd %3, %%xmm0\n\tmovapd %%xmm0, %0\n\t"
+        "movapd %2, %%xmm0\n\tmaxsd %3, %%xmm0\n\tmovapd %%xmm0, %1"
+        : "=m"(min_result), "=m"(max_result) : "m"(a), "m"(b) : "xmm0"
+    );
+    TEST_ASSERT(memcmp(&min_result, &expected, sizeof(expected)) == 0,
+                "MINSD (-0,+0) selects exact +0 source and preserves upper lane");
+    TEST_ASSERT(memcmp(&max_result, &expected, sizeof(expected)) == 0,
+                "MAXSD (-0,+0) selects exact +0 source and preserves upper lane");
+}
+
 int main(void) {
     TEST_START("MINSD/MAXSD instructions");
     test_minsd();
     test_minsd_mem();
     test_maxsd();
     test_maxsd_mem();
+    test_minmaxsd_exact_bits_upper_lane_and_snan();
     TEST_END();
 }

@@ -10,6 +10,8 @@
  * Note: Do not use static linking.
  */
 #include "../common.h"
+#include <float.h>
+#include <math.h>
 
 static void test_vfmsub132ps(void) {
     /* dest = dest*src3 - src2 */
@@ -105,6 +107,43 @@ static void test_vfmsub_result_negative(void) {
     TEST_ASSERT(dst.f32[0] == -8.0f, "vfmsub negative result: got %f", dst.f32[0]);
 }
 
+static void test_vfmsub_special_and_fused(void) {
+    xmm_t a = { .f64 = {0x1.0000000000001p+0, INFINITY} };
+    xmm_t subtrahend = { .f64 = {1.0, 1.0} };
+    xmm_t multiplier = { .f64 = {0x1.fffffffffffffp-1, 0.0} };
+    xmm_t dst;
+    __asm__ volatile (
+        "vmovapd %1, %%xmm0\n\t"
+        "vmovapd %2, %%xmm1\n\t"
+        "vfmsub132pd %3, %%xmm1, %%xmm0\n\t"
+        "vmovapd %%xmm0, %0"
+        : "=m"(dst) : "m"(a), "m"(subtrahend), "m"(multiplier) : "xmm0", "xmm1"
+    );
+    TEST_ASSERT(dst.f64[0] == 0x1.ffffffffffffep-54,
+        "vfmsub fused single-round result: %a", dst.f64[0]);
+    volatile double rounded_product = a.f64[0] * multiplier.f64[0];
+    TEST_ASSERT(rounded_product - subtrahend.f64[0] == 0.0,
+        "vfmsub discriminator requires ordinary multiply/subtract to cancel");
+    TEST_ASSERT(isnan(dst.f64[1]), "vfmsub Inf * 0 is NaN");
+
+    a.f32[0] = NAN;      a.f32[1] = INFINITY; a.f32[2] = FLT_MAX; a.f32[3] = -0.0f;
+    subtrahend.f32[0] = 1.0f; subtrahend.f32[1] = 1.0f;
+    subtrahend.f32[2] = 0.0f; subtrahend.f32[3] = 0.0f;
+    multiplier.f32[0] = 1.0f; multiplier.f32[1] = 0.0f;
+    multiplier.f32[2] = 2.0f; multiplier.f32[3] = 2.0f;
+    __asm__ volatile (
+        "vmovaps %1, %%xmm0\n\t"
+        "vmovaps %2, %%xmm1\n\t"
+        "vfmsub132ps %3, %%xmm1, %%xmm0\n\t"
+        "vmovaps %%xmm0, %0"
+        : "=m"(dst) : "m"(a), "m"(subtrahend), "m"(multiplier) : "xmm0", "xmm1"
+    );
+    TEST_ASSERT(isnan(dst.f32[0]), "vfmsub NaN propagation");
+    TEST_ASSERT(isnan(dst.f32[1]), "vfmsub Inf * 0 is NaN (float)");
+    TEST_ASSERT(isinf(dst.f32[2]) && !signbit(dst.f32[2]), "vfmsub overflow is +Inf");
+    TEST_ASSERT(dst.f32[3] == 0.0f && signbit(dst.f32[3]), "vfmsub preserves negative zero");
+}
+
 int main(void) {
     TEST_START("VFMSUB132PS/VFMSUB213PS/VFMSUB231PS/PD instructions (FMA3)");
     test_vfmsub132ps();
@@ -112,6 +151,7 @@ int main(void) {
     test_vfmsub231ps();
     test_vfmsub132pd();
     test_vfmsub_result_negative();
+    test_vfmsub_special_and_fused();
     __asm__ volatile ("vzeroupper");
     TEST_END();
 }

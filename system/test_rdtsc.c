@@ -13,8 +13,8 @@
 
 #include "../common.h"
 
-static int has_rdtscp(void)
-{
+#if ENABLE_RUNTIME_CPU_CHECKS
+static int has_rdtscp(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile (
         "cpuid"
@@ -23,6 +23,9 @@ static int has_rdtscp(void)
     );
     return (edx >> 27) & 1;
 }
+#else
+#define has_rdtscp() 1
+#endif
 
 /* Test basic RDTSC */
 static void test_rdtsc_basic(void)
@@ -193,6 +196,34 @@ static void test_lfence_rdtsc(void)
     TEST_ASSERT(tsc2 > tsc1, "Serialized RDTSC reads should be increasing");
 }
 
+static void test_timestamp_flags(void)
+{
+    uint64_t before, after_rdtsc, after_rdtscp;
+    uint32_t lo, hi, aux;
+    __asm__ volatile (
+        "movq $0x8d5, %%r11\n\t" "pushq %%r11\n\t" "popfq\n\t"
+        "pushfq\n\t" "popq %0\n\t" "rdtsc\n\t"
+        "pushfq\n\t" "popq %1"
+        : "=&r"(before), "=&r"(after_rdtsc), "=a"(lo), "=d"(hi)
+        :
+        : "r11", "cc");
+    uint64_t mask = CF_FLAG | PF_FLAG | AF_FLAG | ZF_FLAG | SF_FLAG | OF_FLAG;
+    TEST_ASSERT((before & mask) == (after_rdtsc & mask), "RDTSC preserves status flags");
+    TEST_ASSERT((((uint64_t)hi << 32) | lo) != 0, "RDTSC flags test returns a timestamp");
+
+    if (has_rdtscp()) {
+        __asm__ volatile (
+            "movq $0x8d5, %%r11\n\t" "pushq %%r11\n\t" "popfq\n\t"
+            "rdtscp\n\t" "pushfq\n\t" "popq %0"
+            : "=&r"(after_rdtscp), "=a"(lo), "=d"(hi), "=c"(aux)
+            :
+            : "r11", "cc");
+        TEST_ASSERT((before & mask) == (after_rdtscp & mask), "RDTSCP preserves status flags");
+        TEST_ASSERT((((uint64_t)hi << 32) | lo) != 0, "RDTSCP flags test returns a timestamp");
+        (void)aux;
+    }
+}
+
 int main(void)
 {
     test_rdtsc_basic();
@@ -201,6 +232,7 @@ int main(void)
     test_rdtscp_basic();
     test_rdtscp_monotonic();
     test_lfence_rdtsc();
+    test_timestamp_flags();
 
     TEST_END();
 }

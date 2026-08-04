@@ -82,9 +82,26 @@ static void test_bswap_64bit(void) {
     TEST_ASSERT(result == 0xFFFFFFFFFFFFFFFFUL, "bswapq all-ones: unchanged");
 }
 
+static void test_bswap_zero_extension_and_flags(void) {
+    uint64_t result, before, after;
+    __asm__ volatile (
+        "movq $-1, %%rax\n\t" "movl $0x01020304, %%eax\n\t"
+        "movq $0x8d5, %%r11\n\t" "pushq %%r11\n\t" "popfq\n\t"
+        "pushfq\n\t" "popq %1\n\t" "bswapl %%eax\n\t"
+        "pushfq\n\t" "popq %2\n\t" "movq %%rax, %0"
+        : "=r"(result), "=&r"(before), "=&r"(after)
+        :
+        : "rax", "r11", "cc");
+    TEST_ASSERT(result == UINT64_C(0x0000000004030201),
+                "bswapl writes eax and zero-extends rax: %#" PRIx64, result);
+    uint64_t mask = CF_FLAG | PF_FLAG | AF_FLAG | ZF_FLAG | SF_FLAG | OF_FLAG;
+    TEST_ASSERT((before & mask) == (after & mask), "bswap preserves status flags");
+}
+
 int main(void) {
     TEST_START("BSWAP instruction");
     test_bswap_32bit();
     test_bswap_64bit();
+    test_bswap_zero_extension_and_flags();
     TEST_END();
 }

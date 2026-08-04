@@ -73,6 +73,20 @@ static void test_pmovmskb_boundary(void) {
     TEST_ASSERT(result == 0x000A, "pmovmskb boundary 0x7F/0x80: expected 0xA, got 0x%x", result);
 }
 
+static void test_pmovmskb_endpoint_bits_and_zero_extension(void) {
+    xmm_t src = {0};
+    uint64_t result;
+    src.u8[0] = 0x80;
+    src.u8[15] = 0xff;
+    __asm__ volatile (
+        "movq $-1, %%rax\n\t" "movdqa %1, %%xmm0\n\t"
+        "pmovmskb %%xmm0, %%eax\n\t" "movq %%rax, %0"
+        : "=r"(result) : "m"(src) : "rax", "xmm0");
+    TEST_ASSERT(result == UINT64_C(0x0000000000008001),
+                "pmovmskb isolated lowest/highest bits and zero-extends rax: %#" PRIx64,
+                result);
+}
+
 int main(void) {
     TEST_START("PMOVMSKB instruction");
     test_pmovmskb_all_zero();
@@ -80,5 +94,6 @@ int main(void) {
     test_pmovmskb_alternating();
     test_pmovmskb_single_bit();
     test_pmovmskb_boundary();
+    test_pmovmskb_endpoint_bits_and_zero_extension();
     TEST_END();
 }

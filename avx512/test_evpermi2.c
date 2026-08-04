@@ -24,15 +24,95 @@ typedef union {
     double f64[8];
 } zmm_t __attribute__((aligned(64)));
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx512(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile ("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
     return (ebx >> 16) & 1;
 }
+#else
+#define check_avx512() 1
+#endif
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx512vbmi(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile ("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
     return (ecx >> 1) & 1;
+}
+#else
+#define check_avx512vbmi() 1
+#endif
+
+static uint32_t vpermi2d_expected(uint32_t index, const zmm_t *src1, const zmm_t *src2) {
+    uint32_t id = index & 0x1f;
+    return id < 16 ? src1->u32[id] : src2->u32[id - 16];
+}
+
+static void test_vpermi2d_boundaries(void) {
+    zmm_t src1, src2, idx, dst;
+    const uint32_t indices[16] = {
+        0, 15, 16, 31, 32, 47, UINT32_MAX, 1,
+        14, 17, 30, 33, 0x8000000fU, 0x80000010U, 63, 64
+    };
+    for (int i = 0; i < 16; i++) {
+        src1.u32[i] = 0x1000u + (uint32_t)i;
+        src2.u32[i] = 0x2000u + (uint32_t)i;
+        idx.u32[i] = indices[i];
+    }
+
+    __asm__ volatile (
+        "vmovdqu32 %1, %%zmm0\n\t"
+        "vmovdqu32 %2, %%zmm1\n\t"
+        "vmovdqu32 %3, %%zmm2\n\t"
+        "vpermi2d %%zmm2, %%zmm0, %%zmm1\n\t"
+        "vmovdqu32 %%zmm1, %0"
+        : "=m"(dst) : "m"(src1), "m"(idx), "m"(src2) : "zmm0", "zmm1", "zmm2"
+    );
+    for (int i = 0; i < 16; i++)
+        TEST_ASSERT(dst.u32[i] == vpermi2d_expected(idx.u32[i], &src1, &src2),
+            "VPERMI2D wrapped index 0x%08x lane %d", idx.u32[i], i);
+    TEST_ASSERT(dst.u32[1] == src1.u32[15], "VPERMI2D index 15 is last src1 lane");
+    TEST_ASSERT(dst.u32[2] == src2.u32[0], "VPERMI2D index 16 is first src2 lane");
+    TEST_ASSERT(dst.u32[4] == src1.u32[0], "VPERMI2D index 32 wraps to zero");
+    TEST_ASSERT(dst.u32[6] == src2.u32[15], "VPERMI2D UINT32_MAX wraps to index 31");
+
+    const uint64_t masks[] = {0, 0xffff, 0x8001};
+    for (unsigned m = 0; m < sizeof(masks) / sizeof(masks[0]); m++) {
+        uint64_t mask = masks[m];
+        __asm__ volatile (
+            "kmovq %4, %%k1\n\t"
+            "vmovdqu32 %1, %%zmm0\n\t"
+            "vmovdqu32 %2, %%zmm1\n\t"
+            "vmovdqu32 %3, %%zmm2\n\t"
+            "vpermi2d %%zmm2, %%zmm0, %%zmm1%{%%k1%}\n\t"
+            "vmovdqu32 %%zmm1, %0"
+            : "=m"(dst) : "m"(src1), "m"(idx), "m"(src2), "r"(mask)
+            : "zmm0", "zmm1", "zmm2", "k1"
+        );
+        for (int i = 0; i < 16; i++) {
+            uint32_t expected = (mask >> i) & 1
+                ? vpermi2d_expected(idx.u32[i], &src1, &src2) : idx.u32[i];
+            TEST_ASSERT(dst.u32[i] == expected, "VPERMI2D merge mask 0x%04llx lane %d",
+                (unsigned long long)mask, i);
+        }
+
+        __asm__ volatile (
+            "kmovq %4, %%k1\n\t"
+            "vmovdqu32 %1, %%zmm0\n\t"
+            "vmovdqu32 %2, %%zmm1\n\t"
+            "vmovdqu32 %3, %%zmm2\n\t"
+            "vpermi2d %%zmm2, %%zmm0, %%zmm1%{%%k1%}%{z%}\n\t"
+            "vmovdqu32 %%zmm1, %0"
+            : "=m"(dst) : "m"(src1), "m"(idx), "m"(src2), "r"(mask)
+            : "zmm0", "zmm1", "zmm2", "k1"
+        );
+        for (int i = 0; i < 16; i++) {
+            uint32_t expected = (mask >> i) & 1
+                ? vpermi2d_expected(idx.u32[i], &src1, &src2) : 0;
+            TEST_ASSERT(dst.u32[i] == expected, "VPERMI2D zero mask 0x%04llx lane %d",
+                (unsigned long long)mask, i);
+        }
+    }
 }
 
 int main(void) {
@@ -41,6 +121,8 @@ int main(void) {
         return 0;
     }
     TEST_START("EVPERMI2B/EVPERMI2D/EVPERMI2Q/EVPERMI2W (zmm)");
+
+    test_vpermi2d_boundaries();
 
     zmm_t src1, src2, idx, dst;
 

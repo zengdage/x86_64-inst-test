@@ -112,6 +112,51 @@ static void test_dpps_zero(void) {
     TEST_ASSERT(dst.f32[0] == 0.0f, "dpps with zeros: expected 0.0, got %f", dst.f32[0]);
 }
 
+static void test_dpps_masked_exception_and_output_mask(void) {
+    xmm_t a = { .u32 = {UINT32_C(0x3f800000), UINT32_C(0x7f800000),
+                         UINT32_C(0x7f800001), UINT32_C(0xff800000)} };
+    xmm_t b = { .u32 = {UINT32_C(0x40000000), 0,
+                         UINT32_C(0x3f800000), 0} };
+    xmm_t dst;
+    uint32_t saved_mxcsr, mxcsr;
+    __asm__ volatile ("stmxcsr %0" : "=m"(saved_mxcsr));
+    mxcsr = saved_mxcsr & ~UINT32_C(0x3f);
+    __asm__ volatile ("ldmxcsr %0" : : "m"(mxcsr));
+
+    /* Only lane 0 participates; masked-off Inf*0 and SNaN must not signal invalid. */
+    __asm__ volatile (
+        "movdqu %1, %%xmm0\n\t" "dpps $0x1f, %2, %%xmm0\n\t"
+        "movdqu %%xmm0, %0" : "=m"(dst) : "m"(a), "m"(b) : "xmm0");
+    __asm__ volatile ("stmxcsr %0" : "=m"(mxcsr));
+    TEST_ASSERT(!(mxcsr & 1U), "dpps input mask suppresses invalid exceptions from masked lanes");
+    for (int i = 0; i < 4; i++) TEST_ASSERT(dst.f32[i] == 2.0f, "dpps lane0-only result lane %d", i);
+
+    /* Destination mask zero produces exact +0 in every output lane. */
+    __asm__ volatile (
+        "movdqu %1, %%xmm0\n\t" "dpps $0xf0, %2, %%xmm0\n\t"
+        "movdqu %%xmm0, %0" : "=m"(dst) : "m"(a), "m"(b) : "xmm0");
+    for (int i = 0; i < 4; i++)
+        TEST_ASSERT(dst.u32[i] == 0, "dpps destination-mask zero lane %d", i);
+    __asm__ volatile ("ldmxcsr %0" : : "m"(saved_mxcsr));
+}
+
+static void test_dppd_mask_boundaries(void) {
+    xmm_t a = { .u64 = {UINT64_C(0x4000000000000000), UINT64_C(0x7ff0000000000001)} };
+    xmm_t b = { .u64 = {UINT64_C(0x4008000000000000), UINT64_C(0x3ff0000000000000)} };
+    xmm_t dst;
+    uint32_t saved, mxcsr;
+    __asm__ volatile ("stmxcsr %0" : "=m"(saved));
+    mxcsr = saved & ~UINT32_C(0x3f);
+    __asm__ volatile ("ldmxcsr %0" : : "m"(mxcsr));
+    __asm__ volatile (
+        "movdqu %1, %%xmm0\n\t" "dppd $0x13, %2, %%xmm0\n\t"
+        "movdqu %%xmm0, %0" : "=m"(dst) : "m"(a), "m"(b) : "xmm0");
+    __asm__ volatile ("stmxcsr %0" : "=m"(mxcsr));
+    TEST_ASSERT(!(mxcsr & 1U), "dppd input mask suppresses masked SNaN exception");
+    TEST_ASSERT(dst.f64[0] == 6.0 && dst.f64[1] == 6.0, "dppd lane0-only multiply/store-all");
+    __asm__ volatile ("ldmxcsr %0" : : "m"(saved));
+}
+
 int main(void) {
     TEST_START("DPPD/DPPS instructions (SSE4.1)");
     test_dpps_all();
@@ -120,5 +165,7 @@ int main(void) {
     test_dppd_basic();
     test_dppd_selective();
     test_dpps_zero();
+    test_dpps_masked_exception_and_output_mask();
+    test_dppd_mask_boundaries();
     TEST_END();
 }

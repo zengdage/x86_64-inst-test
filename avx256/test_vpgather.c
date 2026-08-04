@@ -6,13 +6,20 @@
  */
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
+#include <sys/mman.h>
+#include <unistd.h>
 #include "../common.h"
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx2(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__("cpuid" : "=a"(eax),"=b"(ebx),"=c"(ecx),"=d"(edx) : "a"(7),"c"(0));
     return (ebx >> 5) & 1;
 }
+#else
+#define check_avx2() 1
+#endif
 
 static void test_vpgatherdd(void) {
     TEST_START("VPGATHERDD (gather int32 with int32 indices, 256-bit)");
@@ -119,11 +126,52 @@ static void test_vpgatherqq(void) {
     TEST_ASSERT(dst[3] == 6000, "vpgatherqq dst[3]=%lld (idx=6)", (long long)dst[3]);
 }
 
+static void test_vpgather_boundaries(void) {
+    int32_t table[24];
+    for (int i = 0; i < 24; i++) table[i] = 1000 + i;
+    int32_t idx[8] = {-2, 0, 0, 3, 7, -1, 2, 1};
+    int32_t mask[8], mask_after[8], dst[8] = {0};
+    for (int i = 0; i < 8; i++) mask[i] = INT32_MIN;
+    int32_t *base = &table[8];
+    __asm__ volatile(
+        "vmovdqu %3,%%ymm1\n\tvmovdqu %4,%%ymm2\n\tvpxor %%ymm0,%%ymm0,%%ymm0\n\t"
+        "vpgatherdd %%ymm2,(%2,%%ymm1,4),%%ymm0\n\tvmovdqu %%ymm0,%0\n\tvmovdqu %%ymm2,%1"
+        : "=m"(dst), "=m"(mask_after) : "r"(base), "m"(idx), "m"(mask)
+        : "ymm0", "ymm1", "ymm2", "memory");
+    for (int i = 0; i < 8; i++) TEST_ASSERT(dst[i] == base[idx[i]], "vpgatherdd signed/repeated index lane %d", i);
+    for (int i = 0; i < 8; i++) TEST_ASSERT(mask_after[i] == 0, "vpgatherdd clears successful mask lane %d", i);
+
+    for (int i = 0; i < 8; i++) idx[i] = i * 4;
+    memset(dst, 0, sizeof(dst));
+    __asm__ volatile(
+        "vmovdqu %2,%%ymm1\n\tvmovdqu %3,%%ymm2\n\tvpxor %%ymm0,%%ymm0,%%ymm0\n\t"
+        "vpgatherdd %%ymm2,(%1,%%ymm1,1),%%ymm0\n\tvmovdqu %%ymm0,%0"
+        : "=m"(dst) : "r"(table), "m"(idx), "m"(mask) : "ymm0", "ymm1", "ymm2", "memory");
+    for (int i = 0; i < 8; i++) TEST_ASSERT(dst[i] == table[i], "vpgatherdd scale=1 lane %d", i);
+
+    long page_size = sysconf(_SC_PAGESIZE);
+    void *guard = mmap(NULL, (size_t)page_size, PROT_NONE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    TEST_ASSERT(guard != MAP_FAILED, "vpgather guard page allocation");
+    if (guard != MAP_FAILED) {
+        int32_t zero_mask[8] = {0};
+        int32_t initial[8] = {11,22,33,44,55,66,77,88};
+        memset(idx, 0, sizeof(idx));
+        __asm__ volatile(
+            "vmovdqu %4,%%ymm0\n\tvmovdqu %2,%%ymm1\n\tvmovdqu %3,%%ymm2\n\t"
+            "vpgatherdd %%ymm2,(%1,%%ymm1,4),%%ymm0\n\tvmovdqu %%ymm0,%0"
+            : "=m"(dst) : "r"(guard), "m"(idx), "m"(zero_mask), "m"(initial)
+            : "ymm0", "ymm1", "ymm2", "memory");
+        TEST_ASSERT(memcmp(dst, initial, sizeof(dst)) == 0, "vpgatherdd empty mask suppresses invalid-address fault");
+        munmap(guard, (size_t)page_size);
+    }
+}
+
 int main(void) {
     if (!check_avx2()) { printf("AVX2 not supported\n"); return 1; }
     test_vpgatherdd();
     test_vpgatherdq();
     test_vpgatherqd();
     test_vpgatherqq();
+    test_vpgather_boundaries();
     TEST_END();
 }

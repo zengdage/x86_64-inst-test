@@ -137,6 +137,31 @@ static void test_sqrtpd_xmm_xmm(void) {
     TEST_ASSERT(result.f64[1] == 7.0, "sqrtpd xmm,xmm [1] sqrt(49)=7");
 }
 
+static void test_sqrtpd_exact_nan_bits_and_invalid(void) {
+    xmm_t input = { .u64 = {
+        UINT64_C(0x7ff8123456789abc), UINT64_C(0x7ff0000000001234)
+    } };
+    xmm_t expected = { .u64 = {
+        UINT64_C(0x7ff8123456789abc), UINT64_C(0x7ff8000000001234)
+    } };
+    xmm_t result;
+    uint32_t old_mxcsr, clean_mxcsr, after_mxcsr;
+
+    __asm__ volatile ("stmxcsr %0" : "=m"(old_mxcsr));
+    clean_mxcsr = old_mxcsr & ~UINT32_C(0x3f);
+    __asm__ volatile ("ldmxcsr %0" : : "m"(clean_mxcsr));
+    __asm__ volatile (
+        "sqrtpd %1, %%xmm0\n\t"
+        "movdqa %%xmm0, %0"
+        : "=m"(result) : "m"(input) : "xmm0"
+    );
+    __asm__ volatile ("stmxcsr %0" : "=m"(after_mxcsr));
+    __asm__ volatile ("ldmxcsr %0" : : "m"(old_mxcsr));
+    TEST_ASSERT(memcmp(&result, &expected, sizeof(expected)) == 0,
+                "SQRTPD preserves QNaN payload and quiets SNaN exactly");
+    TEST_ASSERT(after_mxcsr & 1, "SQRTPD SNaN sets MXCSR invalid flag");
+}
+
 int main(void) {
     TEST_START("SQRTPD instruction");
     test_sqrtpd_basic();
@@ -145,5 +170,6 @@ int main(void) {
     test_sqrtpd_mem();
     test_sqrtpd_denormal();
     test_sqrtpd_xmm_xmm();
+    test_sqrtpd_exact_nan_bits_and_invalid();
     TEST_END();
 }

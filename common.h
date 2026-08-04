@@ -7,6 +7,14 @@
 #include <string.h>
 #include <inttypes.h>
 
+/*
+ * Instruction tests execute directly by default.  Define this to 1 when a
+ * native run should probe CPUID first and skip unsupported instruction sets.
+ */
+#ifndef ENABLE_RUNTIME_CPU_CHECKS
+#define ENABLE_RUNTIME_CPU_CHECKS 0
+#endif
+
 static int test_passed = 0;
 static int test_failed = 0;
 

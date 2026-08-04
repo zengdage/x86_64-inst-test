@@ -157,6 +157,56 @@ static void test_imul_zero(void) {
     TEST_ASSERT(lo == 0 && hi == 0, "imulq 0*anything = 0");
 }
 
+static void test_imul_boundaries(void) {
+    int64_t lo, hi, result;
+    uint64_t flags;
+
+    /* INT64_MIN * 1 is the lowest representable signed result. */
+    __asm__ volatile (
+        "movabsq $0x8000000000000000, %%rax\n\t"
+        "movq $1, %%rcx\n\t"
+        "imulq %%rcx\n\t"
+        "movq %%rax, %0\n\t"
+        "movq %%rdx, %1\n\t"
+        "pushfq\n\t"
+        "popq %2"
+        : "=r"(lo), "=r"(hi), "=r"(flags)
+        :
+        : "rax", "rcx", "rdx", "cc"
+    );
+    TEST_ASSERT(lo == INT64_MIN && hi == -1, "imulq INT64_MIN*1 full result");
+    TEST_ASSERT(!(flags & (CF_FLAG | OF_FLAG)), "imulq INT64_MIN*1: no overflow");
+
+    /* Negating INT64_MIN via multiplication cannot fit in 64 bits. */
+    __asm__ volatile (
+        "movabsq $0x8000000000000000, %%rax\n\t"
+        "imulq $-1, %%rax, %%rax\n\t"
+        "movq %%rax, %0\n\t"
+        "pushfq\n\t"
+        "popq %1"
+        : "=r"(result), "=r"(flags)
+        :
+        : "rax", "cc"
+    );
+    TEST_ASSERT(result == INT64_MIN, "imulq INT64_MIN*-1: truncated result wraps");
+    TEST_ASSERT((flags & (CF_FLAG | OF_FLAG)) == (CF_FLAG | OF_FLAG),
+                "imulq INT64_MIN*-1: CF and OF set");
+
+    /* The one-operand form retains the exact positive 2^63 result. */
+    __asm__ volatile (
+        "movabsq $0x8000000000000000, %%rax\n\t"
+        "movq $-1, %%rcx\n\t"
+        "imulq %%rcx\n\t"
+        "movq %%rax, %0\n\t"
+        "movq %%rdx, %1"
+        : "=r"(lo), "=r"(hi)
+        :
+        : "rax", "rcx", "rdx", "cc"
+    );
+    TEST_ASSERT((uint64_t)lo == UINT64_C(0x8000000000000000) && hi == 0,
+                "imulq one-operand INT64_MIN*-1: exact 128-bit result");
+}
+
 int main(void) {
     TEST_START("IMUL instruction");
     test_imul_one_operand();
@@ -164,5 +214,6 @@ int main(void) {
     test_imul_three_operand();
     test_imul_32bit();
     test_imul_zero();
+    test_imul_boundaries();
     TEST_END();
 }

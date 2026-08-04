@@ -13,11 +13,15 @@
  */
 #include "../common.h"
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx2(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__("cpuid" : "=a"(eax),"=b"(ebx),"=c"(ecx),"=d"(edx) : "a"(7),"c"(0));
     return (ebx >> 5) & 1;
 }
+#else
+#define check_avx2() 1
+#endif
 
 /* Globals live in .rodata/.data and are reached RIP-relative in a PIE build,
  * which is what produces the c5 fe 6f 15 encoding. */

@@ -12,6 +12,28 @@
  */
 #include "../common.h"
 
+static uint64_t pdep_reference(uint64_t src, uint64_t mask) {
+    uint64_t result = 0, source_bit = 1;
+    while (mask != 0) {
+        uint64_t target = mask & (0U - mask);
+        if (src & source_bit) result |= target;
+        mask &= mask - 1;
+        source_bit <<= 1;
+    }
+    return result;
+}
+
+static uint64_t pext_reference(uint64_t src, uint64_t mask) {
+    uint64_t result = 0, dest_bit = 1;
+    while (mask != 0) {
+        uint64_t source = mask & (0U - mask);
+        if (src & source) result |= dest_bit;
+        mask &= mask - 1;
+        dest_bit <<= 1;
+    }
+    return result;
+}
+
 static void test_pdep_basic(void) {
     uint64_t result;
 
@@ -132,6 +154,47 @@ static void test_pdep_pext_32bit(void) {
     TEST_ASSERT(result == 0x00000F0F, "pdepl 0xFF mask 0x0F0F0F0F: expected 0x0F0F, got 0x%x", result);
 }
 
+static void test_pdep_pext_reference_vectors(void) {
+    static const uint64_t values[] = {
+        0, 1, UINT64_MAX, UINT64_C(0x8000000000000000),
+        UINT64_C(0x0123456789abcdef)
+    };
+    static const uint64_t masks[] = {
+        0, 1, UINT64_MAX, UINT64_C(0x8000000000000000),
+        UINT64_C(0xaaaaaaaa55555555), UINT64_C(0x00ff00ff00ff00ff)
+    };
+    for (unsigned i = 0; i < sizeof(values) / sizeof(values[0]); i++) {
+        for (unsigned j = 0; j < sizeof(masks) / sizeof(masks[0]); j++) {
+            uint64_t deposited, extracted;
+            __asm__ volatile ("pdepq %2, %1, %0" : "=r"(deposited) : "r"(values[i]), "r"(masks[j]));
+            __asm__ volatile ("pextq %2, %1, %0" : "=r"(extracted) : "r"(values[i]), "r"(masks[j]));
+            TEST_ASSERT(deposited == pdep_reference(values[i], masks[j]),
+                        "pdep scalar reference value %u mask %u", i, j);
+            TEST_ASSERT(extracted == pext_reference(values[i], masks[j]),
+                        "pext scalar reference value %u mask %u", i, j);
+        }
+    }
+}
+
+static void test_pdep_pext_flags(void) {
+    uint64_t before, middle, after, pdep, pext;
+    uint64_t value = UINT64_C(0x0123456789abcdef);
+    uint64_t mask_value = UINT64_C(0xaaaaaaaa55555555);
+    __asm__ volatile (
+        "movq $0x8d5, %%r11\n\t" "pushq %%r11\n\t" "popfq\n\t"
+        "pushfq\n\t" "popq %0\n\t" "pdepq %6, %5, %3\n\t"
+        "pushfq\n\t" "popq %1\n\t" "pextq %6, %5, %4\n\t"
+        "pushfq\n\t" "popq %2"
+        : "=&r"(before), "=&r"(middle), "=&r"(after), "=&r"(pdep), "=&r"(pext)
+        : "r"(value), "r"(mask_value)
+        : "r11", "cc");
+    uint64_t flags = CF_FLAG | PF_FLAG | AF_FLAG | ZF_FLAG | SF_FLAG | OF_FLAG;
+    TEST_ASSERT((before & flags) == (middle & flags), "pdep preserves status flags");
+    TEST_ASSERT((middle & flags) == (after & flags), "pext preserves status flags");
+    TEST_ASSERT(pdep == pdep_reference(value, mask_value) && pext == pext_reference(value, mask_value),
+                "pdep/pext flags test also checks results");
+}
+
 int main(void) {
     TEST_START("PDEP/PEXT instructions (BMI2)");
     test_pdep_basic();
@@ -141,5 +204,7 @@ int main(void) {
     test_pext_all_ones_mask();
     test_pdep_pext_inverse();
     test_pdep_pext_32bit();
+    test_pdep_pext_reference_vectors();
+    test_pdep_pext_flags();
     TEST_END();
 }

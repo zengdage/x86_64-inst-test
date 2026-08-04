@@ -24,11 +24,15 @@ typedef union {
     double f64[8];
 } zmm_t __attribute__((aligned(64)));
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx512(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile ("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
     return ((ebx >> 16) & 1) && ((ebx >> 30) & 1); /* AVX512F + AVX512BW */
 }
+#else
+#define check_avx512() 1
+#endif
 
 int main(void) {
     if (!check_avx512()) {
@@ -119,6 +123,38 @@ int main(void) {
         : "=m"(dst) : "m"(a), "m"(b) : "zmm0","zmm1","zmm2"
     );
     TEST_ASSERT(dst.u8[0] == 0, "VPADDB wrap lane 0: %u", dst.u8[0]);
+
+    /* Wraparound at every element width. */
+#define TEST_ADD_WRAP(TYPE, FIELD, MOVE, INSN, LANES) do { \
+        for (int i = 0; i < (LANES); i++) { a.FIELD[i] = (TYPE)~(TYPE)0; b.FIELD[i] = 1; } \
+        __asm__ volatile (MOVE " %1, %%zmm0\n\t" MOVE " %2, %%zmm1\n\t" \
+                          INSN " %%zmm1, %%zmm0, %%zmm2\n\t" MOVE " %%zmm2, %0" \
+                          : "=m"(dst) : "m"(a), "m"(b) : "zmm0","zmm1","zmm2"); \
+        for (int i = 0; i < (LANES); i++) \
+            TEST_ASSERT(dst.FIELD[i] == 0, INSN " wrap lane %d", i); \
+    } while (0)
+    TEST_ADD_WRAP(uint16_t, u16, "vmovdqu16", "vpaddw", 32);
+    TEST_ADD_WRAP(uint32_t, u32, "vmovdqu32", "vpaddd", 16);
+    TEST_ADD_WRAP(uint64_t, u64, "vmovdqu64", "vpaddq", 8);
+#undef TEST_ADD_WRAP
+
+    /* Dword mask boundaries: k=0 merge and endpoint-only zero mask. */
+    for (int i = 0; i < 16; i++) { a.u32[i] = 10; b.u32[i] = 20; dst.u32[i] = UINT32_C(0xdeadbeef); }
+    kmask = 0;
+    __asm__ volatile (
+        "kmovq %3, %%k1\n\t" "vmovdqu32 %0, %%zmm2\n\t"
+        "vmovdqu32 %1, %%zmm0\n\t" "vmovdqu32 %2, %%zmm1\n\t"
+        "vpaddd %%zmm1, %%zmm0, %%zmm2%{%%k1%}\n\t" "vmovdqu32 %%zmm2, %0"
+        : "+m"(dst) : "m"(a), "m"(b), "r"(kmask) : "zmm0","zmm1","zmm2","k1");
+    for (int i = 0; i < 16; i++) TEST_ASSERT(dst.u32[i] == UINT32_C(0xdeadbeef), "VPADDD k=0 merge lane %d", i);
+
+    kmask = UINT64_C(0x8001);
+    __asm__ volatile (
+        "kmovq %3, %%k1\n\t" "vmovdqu32 %1, %%zmm0\n\t" "vmovdqu32 %2, %%zmm1\n\t"
+        "vpaddd %%zmm1, %%zmm0, %%zmm2%{%%k1%}%{z%}\n\t" "vmovdqu32 %%zmm2, %0"
+        : "=m"(dst) : "m"(a), "m"(b), "r"(kmask) : "zmm0","zmm1","zmm2","k1");
+    for (int i = 0; i < 16; i++)
+        TEST_ASSERT(dst.u32[i] == ((i == 0 || i == 15) ? 30U : 0U), "VPADDD endpoint zero mask lane %d", i);
 
     TEST_END();
 }

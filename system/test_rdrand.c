@@ -15,8 +15,8 @@
 
 #include "../common.h"
 
-static int has_rdrand(void)
-{
+#if ENABLE_RUNTIME_CPU_CHECKS
+static int has_rdrand(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile (
         "cpuid"
@@ -25,9 +25,12 @@ static int has_rdrand(void)
     );
     return (ecx >> 30) & 1;
 }
+#else
+#define has_rdrand() 1
+#endif
 
-static int has_rdseed(void)
-{
+#if ENABLE_RUNTIME_CPU_CHECKS
+static int has_rdseed(void) {
     uint32_t eax, ebx, ecx, edx;
     /* Check max leaf first */
     __asm__ volatile (
@@ -44,6 +47,9 @@ static int has_rdseed(void)
     );
     return (ebx >> 18) & 1;
 }
+#else
+#define has_rdseed() 1
+#endif
 
 /* Test RDRAND with 16-bit operand */
 static void test_rdrand16(void)

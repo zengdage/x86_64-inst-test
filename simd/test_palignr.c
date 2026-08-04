@@ -106,6 +106,40 @@ static void test_palignr_32(void) {
         "palignr $32: all zeros");
 }
 
+static void test_palignr_boundaries(void) {
+    xmm_t a = { .u8 = {0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15} };
+    xmm_t b = { .u8 = {16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31} };
+    xmm_t dst;
+
+    /* Shift 31 leaves the last byte of the 32-byte concatenation. */
+    __asm__ volatile (
+        "movdqa %1, %%xmm0\n\t"
+        "palignr $31, %2, %%xmm0\n\t"
+        "movdqa %%xmm0, %0"
+        : "=m"(dst) : "m"(a), "m"(b) : "xmm0"
+    );
+    TEST_ASSERT(dst.u8[0] == 15, "palignr $31: low byte is final concatenated byte");
+    for (int i = 1; i < 16; i++)
+        TEST_ASSERT(dst.u8[i] == 0, "palignr $31 [%d]: remaining bytes zero", i);
+
+    /* Values on either side of 32, and the maximum imm8, produce zero. */
+    __asm__ volatile (
+        "movdqa %1, %%xmm0\n\t"
+        "palignr $33, %2, %%xmm0\n\t"
+        "movdqa %%xmm0, %0"
+        : "=m"(dst) : "m"(a), "m"(b) : "xmm0"
+    );
+    TEST_ASSERT(dst.u64[0] == 0 && dst.u64[1] == 0, "palignr $33: all zeros");
+
+    __asm__ volatile (
+        "movdqa %1, %%xmm0\n\t"
+        "palignr $0xff, %2, %%xmm0\n\t"
+        "movdqa %%xmm0, %0"
+        : "=m"(dst) : "m"(a), "m"(b) : "xmm0"
+    );
+    TEST_ASSERT(dst.u64[0] == 0 && dst.u64[1] == 0, "palignr $0xff: all zeros");
+}
+
 int main(void) {
     TEST_START("PALIGNR instruction (SSSE3)");
     test_palignr_zero();
@@ -113,5 +147,6 @@ int main(void) {
     test_palignr_16();
     test_palignr_8();
     test_palignr_32();
+    test_palignr_boundaries();
     TEST_END();
 }

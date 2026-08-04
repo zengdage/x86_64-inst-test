@@ -10,6 +10,7 @@
 #include <stdlib.h>
 #include <stdint.h>
 #include <string.h>
+#include <limits.h>
 #include "../common.h"
 
 typedef union {
@@ -25,11 +26,15 @@ typedef union {
     double f64[8];
 } zmm_t __attribute__((aligned(64)));
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx2(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile ("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
     return (ebx >> 5) & 1;
 }
+#else
+#define check_avx2() 1
+#endif
 
 /* VPSIGN: dst[i] = a[i] if b[i]>0, -a[i] if b[i]<0, 0 if b[i]==0 */
 static int8_t sign_i8(int8_t a, int8_t b) {
@@ -128,6 +133,31 @@ int main(void) {
     );
     for (int i = 0; i < 8; i++)
         TEST_ASSERT(dst.i32[i] == a.i32[i], "VPSIGND pos-b lane %d: %d", i, dst.i32[i]);
+
+    /* Negating INT_MIN wraps to the same bit pattern; selector magnitude is irrelevant. */
+    for (int i = 0; i < 32; i++) { a.i8[i] = INT8_MIN; b.i8[i] = (i & 1) ? -2 : 2; }
+    __asm__ volatile (
+        "vmovdqu %1, %%ymm0\n\t" "vmovdqu %2, %%ymm1\n\t"
+        "vpsignb %%ymm1, %%ymm0, %%ymm2\n\t" "vmovdqu %%ymm2, %0"
+        : "=m"(dst) : "m"(a), "m"(b) : "ymm0","ymm1","ymm2");
+    for (int i = 0; i < 32; i++)
+        TEST_ASSERT(dst.i8[i] == INT8_MIN, "VPSIGNB INT8_MIN selector %d lane %d", b.i8[i], i);
+
+    for (int i = 0; i < 16; i++) { a.i16[i] = INT16_MIN; b.i16[i] = (i & 1) ? -123 : 123; }
+    __asm__ volatile (
+        "vmovdqu %1, %%ymm0\n\t" "vmovdqu %2, %%ymm1\n\t"
+        "vpsignw %%ymm1, %%ymm0, %%ymm2\n\t" "vmovdqu %%ymm2, %0"
+        : "=m"(dst) : "m"(a), "m"(b) : "ymm0","ymm1","ymm2");
+    for (int i = 0; i < 16; i++)
+        TEST_ASSERT(dst.i16[i] == INT16_MIN, "VPSIGNW INT16_MIN selector %d lane %d", b.i16[i], i);
+
+    for (int i = 0; i < 8; i++) { a.i32[i] = INT32_MIN; b.i32[i] = (i & 1) ? INT32_MIN : INT32_MAX; }
+    __asm__ volatile (
+        "vmovdqu %1, %%ymm0\n\t" "vmovdqu %2, %%ymm1\n\t"
+        "vpsignd %%ymm1, %%ymm0, %%ymm2\n\t" "vmovdqu %%ymm2, %0"
+        : "=m"(dst) : "m"(a), "m"(b) : "ymm0","ymm1","ymm2");
+    for (int i = 0; i < 8; i++)
+        TEST_ASSERT(dst.i32[i] == INT32_MIN, "VPSIGND INT32_MIN selector %d lane %d", b.i32[i], i);
 
     TEST_END();
 }

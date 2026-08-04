@@ -72,11 +72,55 @@ static void test_psadbw_both_halves(void) {
     TEST_ASSERT(dst.u64[1] == 80, "psadbw high: 8*10=80, got %lu", dst.u64[1]);
 }
 
+static uint64_t psadbw_reference(const xmm_t *a, const xmm_t *b, int group) {
+    uint64_t sum = 0;
+    for (int i = 0; i < 8; i++) {
+        int diff = (int)a->u8[group * 8 + i] - (int)b->u8[group * 8 + i];
+        sum += (uint64_t)(diff < 0 ? -diff : diff);
+    }
+    return sum;
+}
+
+static void test_psadbw_scalar_reference_and_register_source(void) {
+    xmm_t a = { .u8 = {
+        0, 255, 1, 254, 17, 33, 129, 200,
+        5, 11, 23, 47, 95, 191, 250, 3
+    } };
+    xmm_t b = { .u8 = {
+        255, 0, 2, 253, 99, 1, 128, 201,
+        250, 7, 31, 63, 127, 0, 249, 4
+    } };
+    xmm_t memory_result, register_result;
+
+    __asm__ volatile (
+        "movdqa %2, %%xmm0\n\t"
+        "psadbw %3, %%xmm0\n\t"
+        "movdqa %%xmm0, %0\n\t"
+        "movdqa %2, %%xmm0\n\t"
+        "movdqa %3, %%xmm1\n\t"
+        "psadbw %%xmm1, %%xmm0\n\t"
+        "movdqa %%xmm0, %1"
+        : "=m"(memory_result), "=m"(register_result)
+        : "m"(a), "m"(b)
+        : "xmm0", "xmm1"
+    );
+    for (int group = 0; group < 2; group++) {
+        uint64_t expected = psadbw_reference(&a, &b, group);
+        TEST_ASSERT(memory_result.u64[group] == expected,
+                    "psadbw scalar reference memory source group %d: %" PRIu64 " != %" PRIu64,
+                    group, memory_result.u64[group], expected);
+        TEST_ASSERT(register_result.u64[group] == expected,
+                    "psadbw scalar reference register source group %d: %" PRIu64 " != %" PRIu64,
+                    group, register_result.u64[group], expected);
+    }
+}
+
 int main(void) {
     TEST_START("PSADBW instruction");
     test_psadbw_zero();
     test_psadbw_basic();
     test_psadbw_max();
     test_psadbw_both_halves();
+    test_psadbw_scalar_reference_and_register_source();
     TEST_END();
 }

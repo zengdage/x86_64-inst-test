@@ -70,11 +70,36 @@ static void test_rdtscp_after_rdtsc(void) {
     TEST_ASSERT(tsc2 >= tsc1, "rdtscp >= rdtsc: ordering");
 }
 
+static void test_rdtsc_rdtscp_flags(void) {
+    uint64_t before, after;
+    uint32_t lo, hi, aux;
+    __asm__ volatile (
+        "movq $0x8d5, %%r11\n\t" "pushq %%r11\n\t" "popfq\n\t"
+        "pushfq\n\t" "popq %0\n\t" "rdtsc\n\t"
+        "pushfq\n\t" "popq %1"
+        : "=&r"(before), "=&r"(after), "=a"(lo), "=d"(hi)
+        :
+        : "r11", "cc");
+    uint64_t mask = CF_FLAG | PF_FLAG | AF_FLAG | ZF_FLAG | SF_FLAG | OF_FLAG;
+    TEST_ASSERT((before & mask) == (after & mask), "rdtsc preserves status flags");
+    TEST_ASSERT((((uint64_t)hi << 32) | lo) != 0, "rdtsc flags test returns timestamp");
+
+    __asm__ volatile (
+        "movq $0x8d5, %%r11\n\t" "pushq %%r11\n\t" "popfq\n\t"
+        "rdtscp\n\t" "pushfq\n\t" "popq %0"
+        : "=&r"(after), "=a"(lo), "=d"(hi), "=c"(aux)
+        :
+        : "r11", "cc");
+    TEST_ASSERT((before & mask) == (after & mask), "rdtscp preserves status flags");
+    (void)aux;
+}
+
 int main(void) {
     TEST_START("RDTSC/RDTSCP instructions");
     test_rdtsc_basic();
     test_rdtsc_monotonic();
     test_rdtscp();
     test_rdtscp_after_rdtsc();
+    test_rdtsc_rdtscp_flags();
     TEST_END();
 }

@@ -153,6 +153,42 @@ static void test_minps_denormal(void) {
     TEST_ASSERT(result.f32[3] == -d, "minps min(-denorm,0)=-denorm");
 }
 
+static void test_minmaxps_exact_source_selection_and_snan(void) {
+    xmm_t a = { .u32 = {
+        UINT32_C(0x00000000), UINT32_C(0x80000000),
+        UINT32_C(0x3f800000), UINT32_C(0x40000000)
+    } };
+    xmm_t b = { .u32 = {
+        UINT32_C(0x80000000), UINT32_C(0x00000000),
+        UINT32_C(0x7fc12345), UINT32_C(0x7f812345)
+    } };
+    xmm_t min_result, max_result;
+    uint32_t old_mxcsr, clean_mxcsr, after_mxcsr;
+
+    __asm__ volatile ("stmxcsr %0" : "=m"(old_mxcsr));
+    clean_mxcsr = old_mxcsr & ~UINT32_C(0x3f);
+    __asm__ volatile ("ldmxcsr %0" : : "m"(clean_mxcsr));
+    __asm__ volatile (
+        "movaps %2, %%xmm0\n\t"
+        "minps %3, %%xmm0\n\t"
+        "movaps %%xmm0, %0\n\t"
+        "movaps %2, %%xmm0\n\t"
+        "maxps %3, %%xmm0\n\t"
+        "movaps %%xmm0, %1"
+        : "=m"(min_result), "=m"(max_result)
+        : "m"(a), "m"(b)
+        : "xmm0"
+    );
+    __asm__ volatile ("stmxcsr %0" : "=m"(after_mxcsr));
+    __asm__ volatile ("ldmxcsr %0" : : "m"(old_mxcsr));
+
+    TEST_ASSERT(memcmp(&min_result, &b, sizeof(b)) == 0,
+                "MINPS returns exact second operand for equal zeros and NaNs");
+    TEST_ASSERT(memcmp(&max_result, &b, sizeof(b)) == 0,
+                "MAXPS returns exact second operand for equal zeros and NaNs");
+    TEST_ASSERT(after_mxcsr & 1, "MINPS/MAXPS SNaN sets MXCSR invalid flag");
+}
+
 int main(void) {
     TEST_START("MINPS/MAXPS instructions");
     test_minps_basic();
@@ -162,5 +198,6 @@ int main(void) {
     test_maxps_special();
     test_maxps_mem();
     test_minps_denormal();
+    test_minmaxps_exact_source_selection_and_snan();
     TEST_END();
 }

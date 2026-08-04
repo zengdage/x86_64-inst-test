@@ -166,6 +166,59 @@ static void test_bt_mem(void) {
     TEST_ASSERT(flags & CF_FLAG, "bt mem bit 63: CF should be set");
 }
 
+static void test_bit_index_boundaries(void) {
+    uint64_t result;
+    uint64_t flags;
+    uint64_t words[2] = {0, UINT64_C(0x8000000000000001)};
+
+    /* Register bit indices wrap modulo the operand width. */
+    __asm__ volatile (
+        "movq $1, %%rax\n\t"
+        "movq $64, %%rcx\n\t"
+        "btq %%rcx, %%rax\n\t"
+        "pushfq\n\t"
+        "popq %0"
+        : "=r"(flags)
+        :
+        : "rax", "rcx", "cc"
+    );
+    TEST_ASSERT(flags & CF_FLAG, "btq register index=64: wraps to bit 0");
+
+    __asm__ volatile (
+        "xorq %%rax, %%rax\n\t"
+        "movq $127, %%rcx\n\t"
+        "btsq %%rcx, %%rax\n\t"
+        "movq %%rax, %0"
+        : "=r"(result)
+        :
+        : "rax", "rcx", "cc"
+    );
+    TEST_ASSERT(result == UINT64_C(0x8000000000000000),
+                "btsq register index=127: wraps to bit 63");
+
+    /* A memory bit index continues into the following word instead. */
+    __asm__ volatile (
+        "movq $64, %%rcx\n\t"
+        "btq %%rcx, %1\n\t"
+        "pushfq\n\t"
+        "popq %0"
+        : "=r"(flags)
+        : "m"(words[0])
+        : "rcx", "cc"
+    );
+    TEST_ASSERT(flags & CF_FLAG, "btq memory index=64: reads next qword bit 0");
+
+    __asm__ volatile (
+        "movq $127, %%rcx\n\t"
+        "btrq %%rcx, %0"
+        : "+m"(words[0])
+        :
+        : "rcx", "cc", "memory"
+    );
+    TEST_ASSERT(words[0] == 0 && words[1] == 1,
+                "btrq memory index=127: clears next qword bit 63 only");
+}
+
 int main(void) {
     TEST_START("BT/BTS/BTR/BTC instructions");
     test_bt_reg();
@@ -173,5 +226,6 @@ int main(void) {
     test_btr();
     test_btc();
     test_bt_mem();
+    test_bit_index_boundaries();
     TEST_END();
 }

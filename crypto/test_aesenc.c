@@ -16,6 +16,7 @@
  * Note: Do not use static linking.
  */
 #include "../common.h"
+#include "aes_ref.h"
 
 /* Test AESENC xmm, xmm */
 static void test_aesenc_reg(void) {
@@ -28,6 +29,7 @@ static void test_aesenc_reg(void) {
     xmm_t rkey  = { .u8 = {0x0f,0x0e,0x0d,0x0c,0x0b,0x0a,0x09,0x08,
                             0x07,0x06,0x05,0x04,0x03,0x02,0x01,0x00} };
     xmm_t result;
+    xmm_t expected;
 
     __asm__ volatile (
         "movdqu %1, %%xmm0\n\t"
@@ -38,6 +40,9 @@ static void test_aesenc_reg(void) {
         : "m"(state), "m"(rkey)
         : "xmm0", "xmm1"
     );
+    aes_ref_enc_round(state.u8, rkey.u8, expected.u8, 0);
+    TEST_ASSERT(memcmp(&result, &expected, 16) == 0,
+                "aesenc xmm,xmm matches independent AES round reference");
 
     /* Verify determinism: same inputs produce same output */
     xmm_t result2;
@@ -88,6 +93,7 @@ static void test_aesenc_mem(void) {
     xmm_t rkey  = { .u8 = {0x10,0x20,0x30,0x40,0x50,0x60,0x70,0x80,
                             0x90,0xa0,0xb0,0xc0,0xd0,0xe0,0xf0,0x00} };
     xmm_t result_reg, result_mem;
+    xmm_t expected;
 
     /* reg-reg */
     __asm__ volatile (
@@ -99,6 +105,7 @@ static void test_aesenc_mem(void) {
         : "m"(state), "m"(rkey)
         : "xmm0", "xmm1"
     );
+    aes_ref_enc_round(state.u8, rkey.u8, expected.u8, 0);
 
     /* reg-mem */
     __asm__ volatile (
@@ -112,6 +119,8 @@ static void test_aesenc_mem(void) {
 
     TEST_ASSERT(memcmp(&result_reg, &result_mem, 16) == 0,
                 "aesenc: reg-reg and reg-mem produce same result");
+    TEST_ASSERT(memcmp(&result_mem, &expected, 16) == 0,
+                "aesenc memory source matches independent reference");
 }
 
 /* Test AESENCLAST xmm, xmm */
@@ -121,6 +130,7 @@ static void test_aesenclast_reg(void) {
     xmm_t rkey  = { .u8 = {0x0f,0x0e,0x0d,0x0c,0x0b,0x0a,0x09,0x08,
                             0x07,0x06,0x05,0x04,0x03,0x02,0x01,0x00} };
     xmm_t result;
+    xmm_t expected;
 
     __asm__ volatile (
         "movdqu %1, %%xmm0\n\t"
@@ -131,6 +141,9 @@ static void test_aesenclast_reg(void) {
         : "m"(state), "m"(rkey)
         : "xmm0", "xmm1"
     );
+    aes_ref_enc_round(state.u8, rkey.u8, expected.u8, 1);
+    TEST_ASSERT(memcmp(&result, &expected, 16) == 0,
+                "aesenclast xmm,xmm matches independent reference");
 
     TEST_ASSERT(memcmp(&result, &state, 16) != 0,
                 "aesenclast xmm,xmm: output differs from input");
@@ -160,6 +173,7 @@ static void test_aesenclast_mem(void) {
     xmm_t rkey  = { .u8 = {0xff,0xfe,0xfd,0xfc,0xfb,0xfa,0xf9,0xf8,
                             0xf7,0xf6,0xf5,0xf4,0xf3,0xf2,0xf1,0xf0} };
     xmm_t result_reg, result_mem;
+    xmm_t expected;
 
     __asm__ volatile (
         "movdqu %1, %%xmm0\n\t"
@@ -170,6 +184,7 @@ static void test_aesenclast_mem(void) {
         : "m"(state), "m"(rkey)
         : "xmm0", "xmm1"
     );
+    aes_ref_enc_round(state.u8, rkey.u8, expected.u8, 1);
 
     __asm__ volatile (
         "movdqu %1, %%xmm0\n\t"
@@ -182,6 +197,8 @@ static void test_aesenclast_mem(void) {
 
     TEST_ASSERT(memcmp(&result_reg, &result_mem, 16) == 0,
                 "aesenclast: reg-reg and reg-mem produce same result");
+    TEST_ASSERT(memcmp(&result_mem, &expected, 16) == 0,
+                "aesenclast memory source matches independent reference");
 }
 
 /* Test that AESENC and AESENCLAST produce different results (MixColumns difference) */

@@ -7,13 +7,18 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <math.h>
+#include <float.h>
 #include "../common.h"
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_fma(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__("cpuid" : "=a"(eax),"=b"(ebx),"=c"(ecx),"=d"(edx) : "a"(1),"c"(0));
     return (ecx >> 12) & 1;
 }
+#else
+#define check_fma() 1
+#endif
 
 /* VFNMSUB132PS: dst = -(dst * src2) - src1 */
 static void test_vfnmsub132ps(void) {
@@ -228,6 +233,48 @@ static void test_vfnmsub_ss(void) {
     TEST_ASSERT(r == -14.0f, "vfnmsub231ss r=%f", r);
 }
 
+static void test_vfnmsub_special_and_fused(void) {
+    TEST_START("VFNMSUB special values and fused rounding");
+    double a[4] = {0x1.0000000000001p+0, INFINITY, NAN, DBL_MAX};
+    double subtrahend[4] = {-1.0, 1.0, 1.0, 0.0};
+    double multiplier[4] = {0x1.fffffffffffffp-1, 0.0, 1.0, 2.0};
+    double r[4];
+    __asm__ volatile(
+        "vmovupd %1, %%ymm0\n\t"
+        "vmovupd %2, %%ymm1\n\t"
+        "vmovupd %3, %%ymm2\n\t"
+        "vfnmsub132pd %%ymm2, %%ymm1, %%ymm0\n\t"
+        "vmovupd %%ymm0, %0"
+        : "=m"(r) : "m"(a), "m"(subtrahend), "m"(multiplier) : "ymm0", "ymm1", "ymm2"
+    );
+    TEST_ASSERT(r[0] == -0x1.ffffffffffffep-54,
+        "vfnmsub fused single-round result: %a", r[0]);
+    volatile double rounded_product = a[0] * multiplier[0];
+    TEST_ASSERT(-rounded_product - subtrahend[0] == 0.0,
+        "vfnmsub discriminator requires ordinary multiply/subtract to cancel");
+    TEST_ASSERT(isnan(r[1]), "vfnmsub Inf * 0 is NaN");
+    TEST_ASSERT(isnan(r[2]), "vfnmsub NaN propagation");
+    TEST_ASSERT(isinf(r[3]) && signbit(r[3]), "vfnmsub overflow is -Inf");
+
+    float fa[8] = {0.0f, FLT_MIN, INFINITY, NAN, FLT_MAX, -0.0f, 1.0f, -1.0f};
+    float fb[8] = {0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f, INFINITY, -INFINITY};
+    float fc[8] = {2.0f, 0.5f, 0.0f, 1.0f, 2.0f, 2.0f, 1.0f, 1.0f};
+    float fr[8];
+    __asm__ volatile(
+        "vmovups %1, %%ymm0\n\t"
+        "vmovups %2, %%ymm1\n\t"
+        "vmovups %3, %%ymm2\n\t"
+        "vfnmsub132ps %%ymm2, %%ymm1, %%ymm0\n\t"
+        "vmovups %%ymm0, %0"
+        : "=m"(fr) : "m"(fa), "m"(fb), "m"(fc) : "ymm0", "ymm1", "ymm2"
+    );
+    TEST_ASSERT(fr[0] == 0.0f && signbit(fr[0]), "vfnmsub signed zero");
+    TEST_ASSERT(fr[1] == -FLT_MIN / 2.0f, "vfnmsub subnormal result");
+    TEST_ASSERT(isnan(fr[2]), "vfnmsub Inf * 0 is NaN (float)");
+    TEST_ASSERT(isnan(fr[3]), "vfnmsub NaN propagation (float)");
+    TEST_ASSERT(isinf(fr[4]) && signbit(fr[4]), "vfnmsub float overflow is -Inf");
+}
+
 int main(void) {
     if (!check_fma()) { printf("FMA not supported\n"); return 1; }
     test_vfnmsub132ps();
@@ -236,5 +283,6 @@ int main(void) {
     test_vfnmsub_pd();
     test_vfnmsub_sd();
     test_vfnmsub_ss();
+    test_vfnmsub_special_and_fused();
     TEST_END();
 }

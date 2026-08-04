@@ -98,11 +98,37 @@ static void test_xchg_same_reg(void) {
     TEST_ASSERT(result == 42, "xchgq same reg: value unchanged");
 }
 
+static void test_xchg_memory_widths_and_flags(void) {
+    uint8_t m8 = UINT8_C(0x11), r8 = UINT8_C(0xaa);
+    uint16_t m16 = UINT16_C(0x2233), r16 = UINT16_C(0xbbcc);
+    uint32_t m32 = UINT32_C(0x44556677), r32 = UINT32_C(0xddeeff00);
+    __asm__ volatile ("xchgb %0, %1" : "+q"(r8), "+m"(m8) : : "memory");
+    __asm__ volatile ("xchgw %0, %1" : "+r"(r16), "+m"(m16) : : "memory");
+    __asm__ volatile ("xchgl %0, %1" : "+r"(r32), "+m"(m32) : : "memory");
+    TEST_ASSERT(r8 == UINT8_C(0x11) && m8 == UINT8_C(0xaa), "xchgb register/memory boundary");
+    TEST_ASSERT(r16 == UINT16_C(0x2233) && m16 == UINT16_C(0xbbcc), "xchgw register/memory boundary");
+    TEST_ASSERT(r32 == UINT32_C(0x44556677) && m32 == UINT32_C(0xddeeff00), "xchgl register/memory boundary");
+
+    uint64_t before, after, reg = UINT64_C(0xffffffffffffffff);
+    uint64_t mem = 0;
+    __asm__ volatile (
+        "movq $0x8d5, %%r11\n\t" "pushq %%r11\n\t" "popfq\n\t"
+        "pushfq\n\t" "popq %0\n\t" "xchgq %2, %3\n\t"
+        "pushfq\n\t" "popq %1"
+        : "=&r"(before), "=&r"(after), "+r"(reg), "+m"(mem)
+        :
+        : "r11", "cc", "memory");
+    uint64_t flags = CF_FLAG | PF_FLAG | AF_FLAG | ZF_FLAG | SF_FLAG | OF_FLAG;
+    TEST_ASSERT((before & flags) == (after & flags), "xchg preserves status flags");
+    TEST_ASSERT(reg == 0 && mem == UINT64_MAX, "xchg flags test exchanges zero/all-ones");
+}
+
 int main(void) {
     TEST_START("XCHG instruction");
     test_xchg_reg_reg();
     test_xchg_sizes();
     test_xchg_reg_mem();
     test_xchg_same_reg();
+    test_xchg_memory_widths_and_flags();
     TEST_END();
 }

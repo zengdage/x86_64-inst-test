@@ -8,6 +8,8 @@
  * Note: Do not use static linking.
  */
 #include "../common.h"
+#include <sys/mman.h>
+#include <unistd.h>
 
 static void test_nop_basic(void) {
     uint64_t before, after;
@@ -80,11 +82,44 @@ static void test_nop_sequence(void) {
     TEST_ASSERT(result == 12345, "16 nops: register unchanged");
 }
 
+static void test_nop_long_encodings_and_no_memory_access(void) {
+    const unsigned char *bytes;
+    __asm__ volatile (
+        "jmp 1f\n\t"
+        "0:\n\t"
+        ".byte 0x66,0x0f,0x1f,0x44,0x00,0x00\n\t"
+        ".byte 0x0f,0x1f,0x80,0x00,0x00,0x00,0x00\n\t"
+        ".byte 0x0f,0x1f,0x84,0x00,0x00,0x00,0x00,0x00\n\t"
+        ".byte 0x66,0x0f,0x1f,0x84,0x00,0x00,0x00,0x00,0x00\n\t"
+        "1: leaq 0b(%%rip), %0"
+        : "=r"(bytes));
+    static const unsigned lengths[] = {6, 7, 8, 9};
+    unsigned offset = 0;
+    for (unsigned i = 0; i < 4; i++) {
+        TEST_ASSERT(bytes[offset] == (i == 0 || i == 3 ? 0x66 : 0x0f),
+                    "multi-byte NOP length %u starts with expected prefix/opcode", lengths[i]);
+        offset += lengths[i];
+    }
+
+    long page_size = sysconf(_SC_PAGESIZE);
+    void *guard = mmap(NULL, (size_t)page_size, PROT_NONE,
+                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    TEST_ASSERT(guard != MAP_FAILED, "allocate NOP PROT_NONE page");
+    if (guard == MAP_FAILED) return;
+    /* The ModRM/SIB address is decoded but never accessed. */
+    int reached = 0;
+    __asm__ volatile ("nopl (%%rax)" : : "a"(guard));
+    reached = 1;
+    TEST_ASSERT(reached, "multi-byte NOP memory operand does not access PROT_NONE page");
+    munmap(guard, (size_t)page_size);
+}
+
 int main(void) {
     TEST_START("NOP instruction");
     test_nop_basic();
     test_nop_no_flags();
     test_nop_multi_byte();
     test_nop_sequence();
+    test_nop_long_encodings_and_no_memory_access();
     TEST_END();
 }

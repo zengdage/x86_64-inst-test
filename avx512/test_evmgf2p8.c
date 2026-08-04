@@ -24,11 +24,15 @@ typedef union {
     double f64[8];
 } zmm_t __attribute__((aligned(64)));
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_gfni(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile ("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx) : "a"(7), "c"(0));
     return (ecx >> 8) & 1; /* GFNI: CPUID.7.ECX[8] */
 }
+#else
+#define check_gfni() 1
+#endif
 
 /* GF(2^8) multiply with polynomial x^8+x^4+x^3+x+1 (0x11B) */
 static uint8_t gf_mul(uint8_t a, uint8_t b) {
@@ -39,6 +43,20 @@ static uint8_t gf_mul(uint8_t a, uint8_t b) {
         a <<= 1;
         if (hi) a ^= 0x1B;
         b >>= 1;
+    }
+    return result;
+}
+
+static uint8_t gf_inverse(uint8_t value) {
+    uint8_t result = 1;
+    uint8_t base = value;
+    unsigned exponent = 254;
+
+    if (value == 0) return 0;
+    while (exponent != 0) {
+        if (exponent & 1U) result = gf_mul(result, base);
+        base = gf_mul(base, base);
+        exponent >>= 1;
     }
     return result;
 }
@@ -109,8 +127,12 @@ int main(void) {
         TEST_ASSERT(dst.u8[i] == a.u8[i],
             "GF2P8AFFINEQB identity lane %d: %02x != %02x", i, dst.u8[i], a.u8[i]);
 
-    /* GF2P8AFFINEINVQB zmm: affine transform with inverse S-box */
-    for (int i = 0; i < 64; i++) a.u8[i] = (uint8_t)(i + 1);
+    /* GF2P8AFFINEINVQB zmm: identity affine transform of the field inverse. */
+    for (int i = 0; i < 64; i++) {
+        static const uint8_t boundary[] = {0x00, 0x01, 0x02, 0x53, 0x80, 0xfe, 0xff};
+        a.u8[i] = i < (int)(sizeof(boundary) / sizeof(boundary[0]))
+                    ? boundary[i] : (uint8_t)(i * 37 + 11);
+    }
     for (int i = 0; i < 8; i++) b.u64[i] = identity_matrix;
     __asm__ volatile (
         "vmovdqu8 %1, %%zmm0\n\t"
@@ -119,8 +141,44 @@ int main(void) {
         "vmovdqu8 %%zmm2, %0"
         : "=m"(dst) : "m"(a), "m"(b) : "zmm0","zmm1","zmm2"
     );
-    /* Just verify it executes and produces some output */
-    TEST_ASSERT(1, "GF2P8AFFINEINVQB executed");
+    for (int i = 0; i < 64; i++) {
+        uint8_t expected = gf_inverse(a.u8[i]);
+        TEST_ASSERT(dst.u8[i] == expected,
+            "GF2P8AFFINEINVQB lane %d: %02x != %02x", i, dst.u8[i], expected);
+    }
+
+    /* Immediate boundary: identity inverse followed by XOR 0xff. */
+    __asm__ volatile (
+        "vmovdqu8 %1, %%zmm0\n\t"
+        "vmovdqu8 %2, %%zmm1\n\t"
+        "vgf2p8affineinvqb $0xff, %%zmm1, %%zmm0, %%zmm2\n\t"
+        "vmovdqu8 %%zmm2, %0"
+        : "=m"(dst) : "m"(a), "m"(b) : "zmm0","zmm1","zmm2"
+    );
+    for (int i = 0; i < 64; i++) {
+        uint8_t expected = (uint8_t)(gf_inverse(a.u8[i]) ^ 0xffU);
+        TEST_ASSERT(dst.u8[i] == expected,
+            "GF2P8AFFINEINVQB imm=ff lane %d: %02x != %02x", i, dst.u8[i], expected);
+    }
+
+    /* Merge-mask boundaries: only the lowest and highest byte lanes execute. */
+    memset(&dst, 0x5a, sizeof(dst));
+    uint64_t affine_mask = UINT64_C(0x8000000000000001);
+    __asm__ volatile (
+        "kmovq %3, %%k1\n\t"
+        "vmovdqu8 %0, %%zmm2\n\t"
+        "vmovdqu8 %1, %%zmm0\n\t"
+        "vmovdqu8 %2, %%zmm1\n\t"
+        "vgf2p8affineinvqb $0, %%zmm1, %%zmm0, %%zmm2%{%%k1%}\n\t"
+        "vmovdqu8 %%zmm2, %0"
+        : "+m"(dst) : "m"(a), "m"(b), "r"(affine_mask)
+        : "zmm0","zmm1","zmm2","k1"
+    );
+    for (int i = 0; i < 64; i++) {
+        uint8_t expected = ((affine_mask >> i) & 1U) ? gf_inverse(a.u8[i]) : 0x5a;
+        TEST_ASSERT(dst.u8[i] == expected,
+            "GF2P8AFFINEINVQB merge mask lane %d: %02x != %02x", i, dst.u8[i], expected);
+    }
 
     /* GF2P8MULB with zeroing masking */
     for (int i = 0; i < 64; i++) { a.u8[i] = (uint8_t)(i + 1); b.u8[i] = 2; }

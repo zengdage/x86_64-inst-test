@@ -7,13 +7,18 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <math.h>
+#include <float.h>
 #include "../common.h"
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__("cpuid" : "=a"(eax),"=b"(ebx),"=c"(ecx),"=d"(edx) : "a"(1),"c"(0));
     return (ecx >> 28) & 1;
 }
+#else
+#define check_avx() 1
+#endif
 
 static void test_vsqrtpd(void) {
     TEST_START("VSQRTPD (256-bit)");
@@ -189,6 +194,47 @@ static void test_vrsqrtss(void) {
     TEST_ASSERT(fabsf(r - 0.5f) < 0.001f, "vrsqrtss mem r=%f", r);
 }
 
+static void test_vsqrt_rcp_boundaries(void) {
+    double ad[4] = {0.0, -0.0, INFINITY, -1.0};
+    double rd[4];
+    float af[8] = {0.0f, -0.0f, INFINITY, -INFINITY,
+                   NAN, -1.0f, FLT_MAX, 1.0f};
+    float rf[8];
+
+    __asm__ volatile (
+        "vsqrtpd %1, %%ymm0\n\t"
+        "vmovupd %%ymm0, %0"
+        : "=m"(rd[0]) : "m"(ad[0]) : "ymm0"
+    );
+    TEST_ASSERT(rd[0] == 0.0 && !signbit(rd[0]), "vsqrtpd +0 preserves sign");
+    TEST_ASSERT(rd[1] == 0.0 && signbit(rd[1]), "vsqrtpd -0 preserves sign");
+    TEST_ASSERT(isinf(rd[2]) && rd[2] > 0.0, "vsqrtpd +inf = +inf");
+    TEST_ASSERT(isnan(rd[3]), "vsqrtpd negative finite = NaN");
+
+    __asm__ volatile (
+        "vrcpps %1, %%ymm0\n\t"
+        "vmovups %%ymm0, %0"
+        : "=m"(rf[0]) : "m"(af[0]) : "ymm0"
+    );
+    TEST_ASSERT(isinf(rf[0]) && rf[0] > 0.0f, "vrcpps +0 = +inf");
+    TEST_ASSERT(isinf(rf[1]) && rf[1] < 0.0f, "vrcpps -0 = -inf");
+    TEST_ASSERT(rf[2] == 0.0f && !signbit(rf[2]), "vrcpps +inf = +0");
+    TEST_ASSERT(rf[3] == 0.0f && signbit(rf[3]), "vrcpps -inf = -0");
+    TEST_ASSERT(isnan(rf[4]), "vrcpps NaN propagates NaN");
+    TEST_ASSERT(rf[5] < 0.0f, "vrcpps negative input preserves result sign");
+
+    __asm__ volatile (
+        "vrsqrtps %1, %%ymm0\n\t"
+        "vmovups %%ymm0, %0"
+        : "=m"(rf[0]) : "m"(af[0]) : "ymm0"
+    );
+    TEST_ASSERT(isinf(rf[0]) && rf[0] > 0.0f, "vrsqrtps +0 = +inf");
+    TEST_ASSERT(isinf(rf[1]) && rf[1] < 0.0f, "vrsqrtps -0 = -inf");
+    TEST_ASSERT(rf[2] == 0.0f && !signbit(rf[2]), "vrsqrtps +inf = +0");
+    TEST_ASSERT(isnan(rf[3]), "vrsqrtps -inf = NaN");
+    TEST_ASSERT(isnan(rf[4]) && isnan(rf[5]), "vrsqrtps NaN and negative finite = NaN");
+}
+
 int main(void) {
     if (!check_avx()) { printf("AVX not supported\n"); return 1; }
     test_vsqrtpd();
@@ -199,5 +245,6 @@ int main(void) {
     test_vrcpss();
     test_vrsqrtps();
     test_vrsqrtss();
+    test_vsqrt_rcp_boundaries();
     TEST_END();
 }

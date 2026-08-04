@@ -1,11 +1,15 @@
 #include "../common.h"
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int check_adx(void) {
     uint32_t eax, ebx, ecx, edx;
     __asm__ volatile("cpuid" : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
                      : "a"(7), "c"(0));
     return (ebx >> 19) & 1;
 }
+#else
+#define check_adx() 1
+#endif
 
 int main(void) {
     TEST_START("ADCX/ADOX");

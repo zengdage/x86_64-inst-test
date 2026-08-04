@@ -152,6 +152,55 @@ static void test_maxpd_mem(void) {
     TEST_ASSERT(result.f64[1] == 10.0, "maxpd xmm,mem [1] max(1,10)=10");
 }
 
+static void test_minmaxpd_exact_source_selection_and_snan(void) {
+    xmm_t a = { .u64 = {
+        UINT64_C(0x0000000000000000), UINT64_C(0x3ff0000000000000)
+    } };
+    xmm_t b = { .u64 = {
+        UINT64_C(0x8000000000000000), UINT64_C(0x7ff0000000001234)
+    } };
+    xmm_t min_result, max_result;
+    uint32_t old_mxcsr, clean_mxcsr, after_mxcsr;
+
+    __asm__ volatile ("stmxcsr %0" : "=m"(old_mxcsr));
+    clean_mxcsr = old_mxcsr & ~UINT32_C(0x3f);
+    __asm__ volatile ("ldmxcsr %0" : : "m"(clean_mxcsr));
+    __asm__ volatile (
+        "movapd %2, %%xmm0\n\t"
+        "minpd %3, %%xmm0\n\t"
+        "movapd %%xmm0, %0\n\t"
+        "movapd %2, %%xmm0\n\t"
+        "maxpd %3, %%xmm0\n\t"
+        "movapd %%xmm0, %1"
+        : "=m"(min_result), "=m"(max_result)
+        : "m"(a), "m"(b)
+        : "xmm0"
+    );
+    __asm__ volatile ("stmxcsr %0" : "=m"(after_mxcsr));
+    __asm__ volatile ("ldmxcsr %0" : : "m"(old_mxcsr));
+
+    TEST_ASSERT(memcmp(&min_result, &b, sizeof(b)) == 0,
+                "MINPD returns exact second operand for equal zero and SNaN");
+    TEST_ASSERT(memcmp(&max_result, &b, sizeof(b)) == 0,
+                "MAXPD returns exact second operand for equal zero and SNaN");
+    TEST_ASSERT(after_mxcsr & 1, "MINPD/MAXPD SNaN sets MXCSR invalid flag");
+
+    /* Reversing equal signed zeros must reverse the selected zero sign. */
+    a.u64[0] = UINT64_C(0x8000000000000000);
+    b.u64[0] = UINT64_C(0x0000000000000000);
+    a.u64[1] = UINT64_C(0x4000000000000000);
+    b.u64[1] = UINT64_C(0x7ff8123456789abc);
+    __asm__ volatile (
+        "movapd %2, %%xmm0\n\tminpd %3, %%xmm0\n\tmovapd %%xmm0, %0\n\t"
+        "movapd %2, %%xmm0\n\tmaxpd %3, %%xmm0\n\tmovapd %%xmm0, %1"
+        : "=m"(min_result), "=m"(max_result) : "m"(a), "m"(b) : "xmm0"
+    );
+    TEST_ASSERT(memcmp(&min_result, &b, sizeof(b)) == 0,
+                "MINPD exact +0 and QNaN source payload selection");
+    TEST_ASSERT(memcmp(&max_result, &b, sizeof(b)) == 0,
+                "MAXPD exact +0 and QNaN source payload selection");
+}
+
 int main(void) {
     TEST_START("MINPD/MAXPD instructions");
     test_minpd_basic();
@@ -160,5 +209,6 @@ int main(void) {
     test_maxpd_basic();
     test_maxpd_special();
     test_maxpd_mem();
+    test_minmaxpd_exact_source_selection_and_snan();
     TEST_END();
 }

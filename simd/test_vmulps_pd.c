@@ -7,6 +7,8 @@
  * Note: Do not use static linking.
  */
 #include "../common.h"
+#include <float.h>
+#include <math.h>
 
 static void test_vmulps_256(void) {
     ymm_t a = { .f32 = {1.0f,2.0f,3.0f,4.0f,5.0f,6.0f,7.0f,8.0f} };
@@ -96,6 +98,77 @@ static void test_vmulps_by_zero(void) {
     }
 }
 
+static void test_mul_div_special_values(void) {
+    ymm_t a = { .f32 = {
+        0.0f, -0.0f, INFINITY, FLT_MAX,
+        FLT_MIN, NAN, -INFINITY, 0x1p-149f
+    } };
+    ymm_t b = { .f32 = {
+        INFINITY, 2.0f, -2.0f, 2.0f,
+        0.5f, 1.0f, -0.0f, 0.5f
+    } };
+    ymm_t dst;
+    __asm__ volatile (
+        "vmovaps %1, %%ymm0\n\t"
+        "vmulps %2, %%ymm0, %%ymm1\n\t"
+        "vmovaps %%ymm1, %0"
+        : "=m"(dst) : "m"(a), "m"(b) : "ymm0", "ymm1"
+    );
+    TEST_ASSERT(isnan(dst.f32[0]), "vmulps 0 * Inf is NaN");
+    TEST_ASSERT(dst.f32[1] == 0.0f && signbit(dst.f32[1]), "vmulps -0 * positive is -0");
+    TEST_ASSERT(isinf(dst.f32[2]) && signbit(dst.f32[2]), "vmulps +Inf * negative is -Inf");
+    TEST_ASSERT(isinf(dst.f32[3]) && !signbit(dst.f32[3]), "vmulps overflow to +Inf");
+    TEST_ASSERT(dst.f32[4] == FLT_MIN / 2.0f, "vmulps subnormal result");
+    TEST_ASSERT(isnan(dst.f32[5]), "vmulps NaN propagation");
+    TEST_ASSERT(isnan(dst.f32[6]), "vmulps Inf * zero is NaN");
+    TEST_ASSERT(dst.f32[7] == 0.0f, "vmulps minimum subnormal underflows to zero");
+
+    a.f32[0] = INFINITY; a.f32[1] = 0.0f; a.f32[2] = 1.0f; a.f32[3] = -1.0f;
+    a.f32[4] = 1.0f; a.f32[5] = -0.0f; a.f32[6] = FLT_MIN; a.f32[7] = NAN;
+    b.f32[0] = INFINITY; b.f32[1] = 0.0f; b.f32[2] = 0.0f; b.f32[3] = 0.0f;
+    b.f32[4] = INFINITY; b.f32[5] = 2.0f; b.f32[6] = 2.0f; b.f32[7] = 1.0f;
+    __asm__ volatile (
+        "vmovaps %1, %%ymm0\n\t"
+        "vdivps %2, %%ymm0, %%ymm1\n\t"
+        "vmovaps %%ymm1, %0"
+        : "=m"(dst) : "m"(a), "m"(b) : "ymm0", "ymm1"
+    );
+    TEST_ASSERT(isnan(dst.f32[0]), "vdivps Inf / Inf is NaN");
+    TEST_ASSERT(isnan(dst.f32[1]), "vdivps 0 / 0 is NaN");
+    TEST_ASSERT(isinf(dst.f32[2]) && !signbit(dst.f32[2]), "vdivps 1 / +0 is +Inf");
+    TEST_ASSERT(isinf(dst.f32[3]) && signbit(dst.f32[3]), "vdivps -1 / +0 is -Inf");
+    TEST_ASSERT(dst.f32[4] == 0.0f && !signbit(dst.f32[4]), "vdivps 1 / Inf is +0");
+    TEST_ASSERT(dst.f32[5] == 0.0f && signbit(dst.f32[5]), "vdivps -0 / positive is -0");
+    TEST_ASSERT(dst.f32[6] == FLT_MIN / 2.0f, "vdivps subnormal result");
+    TEST_ASSERT(isnan(dst.f32[7]), "vdivps NaN propagation");
+
+    a.f64[0] = 0.0; a.f64[1] = -0.0; a.f64[2] = INFINITY; a.f64[3] = DBL_MAX;
+    b.f64[0] = INFINITY; b.f64[1] = 2.0; b.f64[2] = -2.0; b.f64[3] = 2.0;
+    __asm__ volatile (
+        "vmovapd %1, %%ymm0\n\t"
+        "vmulpd %2, %%ymm0, %%ymm1\n\t"
+        "vmovapd %%ymm1, %0"
+        : "=m"(dst) : "m"(a), "m"(b) : "ymm0", "ymm1"
+    );
+    TEST_ASSERT(isnan(dst.f64[0]), "vmulpd 0 * Inf is NaN");
+    TEST_ASSERT(dst.f64[1] == 0.0 && signbit(dst.f64[1]), "vmulpd -0 * positive is -0");
+    TEST_ASSERT(isinf(dst.f64[2]) && signbit(dst.f64[2]), "vmulpd +Inf * negative is -Inf");
+    TEST_ASSERT(isinf(dst.f64[3]) && !signbit(dst.f64[3]), "vmulpd overflow to +Inf");
+
+    a.f64[0] = INFINITY; a.f64[1] = 0.0; a.f64[2] = 1.0; a.f64[3] = DBL_MIN;
+    b.f64[0] = INFINITY; b.f64[1] = 0.0; b.f64[2] = INFINITY; b.f64[3] = 2.0;
+    __asm__ volatile (
+        "vmovapd %1, %%ymm0\n\t"
+        "vdivpd %2, %%ymm0, %%ymm1\n\t"
+        "vmovapd %%ymm1, %0"
+        : "=m"(dst) : "m"(a), "m"(b) : "ymm0", "ymm1"
+    );
+    TEST_ASSERT(isnan(dst.f64[0]), "vdivpd Inf / Inf is NaN");
+    TEST_ASSERT(isnan(dst.f64[1]), "vdivpd 0 / 0 is NaN");
+    TEST_ASSERT(dst.f64[2] == 0.0 && !signbit(dst.f64[2]), "vdivpd 1 / Inf is +0");
+    TEST_ASSERT(dst.f64[3] == DBL_MIN / 2.0, "vdivpd subnormal result");
+}
+
 int main(void) {
     TEST_START("VMULPS/VMULPD/VDIVPS/VDIVPD instructions (AVX 256-bit)");
     test_vmulps_256();
@@ -103,6 +176,7 @@ int main(void) {
     test_vdivps_256();
     test_vdivpd_256();
     test_vmulps_by_zero();
+    test_mul_div_special_values();
     __asm__ volatile ("vzeroupper");
     TEST_END();
 }

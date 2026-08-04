@@ -124,6 +124,64 @@ static void test_shld_16bit(void) {
     TEST_ASSERT(result == 0x234A, "shldw by 4: expected 0x234A, got 0x%x", result);
 }
 
+static void test_double_shift_count_boundaries(void) {
+    uint64_t result;
+    uint64_t flags;
+    uint32_t r32;
+
+    /* 64-bit counts are masked to six bits, including CL counts. */
+    __asm__ volatile (
+        "stc\n\t"
+        "movq $0x123456789abcdef0, %%rax\n\t"
+        "movq $0xfedcba9876543210, %%rbx\n\t"
+        "shldq $64, %%rbx, %%rax\n\t"
+        "movq %%rax, %0\n\t"
+        "pushfq\n\t"
+        "popq %1"
+        : "=r"(result), "=r"(flags)
+        :
+        : "rax", "rbx", "cc"
+    );
+    TEST_ASSERT(result == UINT64_C(0x123456789abcdef0),
+                "shldq count=64: destination unchanged");
+    TEST_ASSERT(flags & CF_FLAG, "shldq effective count 0: CF preserved");
+
+    __asm__ volatile (
+        "movq $0, %%rax\n\t"
+        "movq $0x8000000000000000, %%rbx\n\t"
+        "movb $65, %%cl\n\t"
+        "shldq %%cl, %%rbx, %%rax\n\t"
+        "movq %%rax, %0"
+        : "=r"(result)
+        :
+        : "rax", "rbx", "rcx", "cc"
+    );
+    TEST_ASSERT(result == 1, "shldq CL=65: expected effective count 1");
+
+    /* 32-bit counts use five bits, so 32 is zero and 33 is one. */
+    __asm__ volatile (
+        "movl $0x12345678, %%eax\n\t"
+        "movl $0xabcdef01, %%ebx\n\t"
+        "shrdl $32, %%ebx, %%eax\n\t"
+        "movl %%eax, %0"
+        : "=r"(r32)
+        :
+        : "rax", "rbx", "cc"
+    );
+    TEST_ASSERT(r32 == UINT32_C(0x12345678), "shrdl count=32: destination unchanged");
+
+    __asm__ volatile (
+        "movl $0, %%eax\n\t"
+        "movl $1, %%ebx\n\t"
+        "shrdl $33, %%ebx, %%eax\n\t"
+        "movl %%eax, %0"
+        : "=r"(r32)
+        :
+        : "rax", "rbx", "cc"
+    );
+    TEST_ASSERT(r32 == UINT32_C(0x80000000), "shrdl count=33: expected effective count 1");
+}
+
 int main(void) {
     TEST_START("SHLD/SHRD instructions");
     test_shld_basic();
@@ -132,5 +190,6 @@ int main(void) {
     test_shrd_32bit();
     test_shld_cl();
     test_shld_16bit();
+    test_double_shift_count_boundaries();
     TEST_END();
 }

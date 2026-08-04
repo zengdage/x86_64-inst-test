@@ -23,6 +23,7 @@
 #include <signal.h>
 #include <setjmp.h>
 
+#if ENABLE_RUNTIME_CPU_CHECKS
 static sigjmp_buf jmp_env;
 static volatile int got_sigill = 0;
 
@@ -89,21 +90,29 @@ static int rdpkru_works(void)
     sigaction(SIGILL, &old_sa, NULL);
     return !got_sigill;
 }
+#else
+#define has_pku_cpuid() 1
+#define has_ospke() 1
+#define rdpkru_works() 1
+#endif
 
 /* Test basic RDPKRU */
 static void test_rdpkru_basic(void)
 {
-    uint32_t pkru;
+    uint64_t pkru64;
+    uint32_t edx_out;
 
     TEST_START("RDPKRU - Basic read");
 
     __asm__ volatile (
         "xor %%ecx, %%ecx\n\t"
         "rdpkru"
-        : "=a"(pkru)
+        : "=a"(pkru64), "=d"(edx_out)
         :
-        : "ecx", "edx"
+        : "ecx"
     );
+
+    uint32_t pkru = (uint32_t)pkru64;
 
     printf("  PKRU = 0x%08X\n", pkru);
 
@@ -119,7 +128,8 @@ static void test_rdpkru_basic(void)
     /* Key 0 is typically used for normal allocations; AD and WD should be 0 */
     TEST_ASSERT(((pkru >> 0) & 3) == 0,
                 "Key 0 should have no restrictions (bits[1:0] = 0), got %u", pkru & 3);
-    TEST_ASSERT(1, "RDPKRU executed successfully");
+    TEST_ASSERT((pkru64 >> 32) == 0, "RDPKRU zero-extends EAX into RAX");
+    TEST_ASSERT(edx_out == 0, "RDPKRU clears EDX");
 }
 
 /* Test WRPKRU/RDPKRU round-trip */
@@ -301,21 +311,70 @@ static void test_rdpkru_no_flag_change(void)
 
     TEST_START("RDPKRU - Does not modify flags");
 
-    flags_before = get_flags();
     __asm__ volatile (
-        "xor %%ecx, %%ecx\n\t"
-        "rdpkru"
-        : "=a"(pkru)
+        "movl $0, %%ecx\n\t"
+        "movq $0x8d5, %%r11\n\t"
+        "pushq %%r11\n\t"
+        "popfq\n\t"
+        "pushfq\n\t"
+        "popq %1\n\t"
+        "rdpkru\n\t"
+        "pushfq\n\t"
+        "popq %2"
+        : "=a"(pkru), "=&r"(flags_before), "=&r"(flags_after)
         :
-        : "ecx", "edx"
+        : "ecx", "edx", "r11", "cc"
     );
-    flags_after = get_flags();
-
-    /* Note: xor ecx,ecx modifies flags, so we check around the whole block.
-     * The flags_before is taken before the asm block. In practice, the xor
-     * will set ZF etc., so we just verify RDPKRU itself doesn't cause issues. */
     (void)pkru;
-    TEST_ASSERT(1, "RDPKRU executed without faulting");
+    uint64_t mask = CF_FLAG | PF_FLAG | AF_FLAG | ZF_FLAG | SF_FLAG | OF_FLAG;
+    TEST_ASSERT((flags_before & mask) == (flags_after & mask),
+                "RDPKRU preserves flags: before=%#" PRIx64 " after=%#" PRIx64,
+                flags_before & mask, flags_after & mask);
+}
+
+static sigjmp_buf pkru_fault_env;
+static volatile sig_atomic_t got_pkru_fault;
+
+static void pkru_fault_handler(int sig)
+{
+    (void)sig;
+    got_pkru_fault = 1;
+    siglongjmp(pkru_fault_env, 1);
+}
+
+static void test_pkru_reserved_inputs(void)
+{
+    uint32_t original, readback;
+    struct sigaction sa, old_segv, old_bus;
+    memset(&sa, 0, sizeof(sa));
+    sa.sa_handler = pkru_fault_handler;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGSEGV, &sa, &old_segv);
+    sigaction(SIGBUS, &sa, &old_bus);
+
+    __asm__ volatile ("movl $0, %%ecx\n\trdpkru" : "=a"(original) : : "ecx", "edx");
+
+    for (int which = 0; which < 3; which++) {
+        got_pkru_fault = 0;
+        if (sigsetjmp(pkru_fault_env, 1) == 0) {
+            if (which == 0) {
+                __asm__ volatile ("movl $1, %%ecx\n\trdpkru" : : : "eax", "ecx", "edx");
+            } else if (which == 1) {
+                __asm__ volatile ("movl $1, %%ecx\n\tmovl $0, %%edx\n\twrpkru"
+                                  : : "a"(original) : "ecx", "edx");
+            } else {
+                __asm__ volatile ("movl $0, %%ecx\n\tmovl $1, %%edx\n\twrpkru"
+                                  : : "a"(original) : "ecx", "edx");
+            }
+        }
+        TEST_ASSERT(got_pkru_fault, "%s with reserved nonzero input raises #GP",
+                    which == 0 ? "RDPKRU ECX" : (which == 1 ? "WRPKRU ECX" : "WRPKRU EDX"));
+        __asm__ volatile ("movl $0, %%ecx\n\trdpkru" : "=a"(readback) : : "ecx", "edx");
+        TEST_ASSERT(readback == original, "PKRU unchanged after reserved-input fault case %d", which);
+    }
+
+    sigaction(SIGSEGV, &old_segv, NULL);
+    sigaction(SIGBUS, &old_bus, NULL);
 }
 
 int main(void)
@@ -351,6 +410,7 @@ int main(void)
     test_wrpkru_zero();
     test_wrpkru_all_bits();
     test_rdpkru_no_flag_change();
+    test_pkru_reserved_inputs();
 
     TEST_END();
 }

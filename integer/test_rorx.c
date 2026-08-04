@@ -106,11 +106,59 @@ static void test_rorx_mem(void) {
     TEST_ASSERT(result == 0x0801020304050607UL, "rorxq mem by 8");
 }
 
+static void test_rorx_count_boundaries(void) {
+    uint64_t result;
+    uint32_t r32;
+
+    __asm__ volatile (
+        "movq $0x123456789abcdef0, %%rax\n\t"
+        "rorxq $64, %%rax, %%rbx\n\t"
+        "movq %%rbx, %0"
+        : "=r"(result)
+        :
+        : "rax", "rbx"
+    );
+    TEST_ASSERT(result == UINT64_C(0x123456789abcdef0),
+                "rorxq count=64: expected identity");
+
+    __asm__ volatile (
+        "movq $1, %%rax\n\t"
+        "rorxq $65, %%rax, %%rbx\n\t"
+        "movq %%rbx, %0"
+        : "=r"(result)
+        :
+        : "rax", "rbx"
+    );
+    TEST_ASSERT(result == UINT64_C(0x8000000000000000),
+                "rorxq count=65: expected effective count 1");
+
+    __asm__ volatile (
+        "movl $0x12345678, %%eax\n\t"
+        "rorxl $32, %%eax, %%ebx\n\t"
+        "movl %%ebx, %0"
+        : "=r"(r32)
+        :
+        : "rax", "rbx"
+    );
+    TEST_ASSERT(r32 == UINT32_C(0x12345678), "rorxl count=32: expected identity");
+
+    __asm__ volatile (
+        "movl $1, %%eax\n\t"
+        "rorxl $255, %%eax, %%ebx\n\t"
+        "movl %%ebx, %0"
+        : "=r"(r32)
+        :
+        : "rax", "rbx"
+    );
+    TEST_ASSERT(r32 == 2, "rorxl count=255: expected effective count 31");
+}
+
 int main(void) {
     TEST_START("RORX instruction (BMI2)");
     test_rorx_64bit();
     test_rorx_32bit();
     test_rorx_no_flags();
     test_rorx_mem();
+    test_rorx_count_boundaries();
     TEST_END();
 }

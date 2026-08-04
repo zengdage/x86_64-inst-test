@@ -131,6 +131,38 @@ static void test_test_reg_reg(void) {
     TEST_ASSERT(flags & ZF_FLAG, "testq rax,rax (rax=0): ZF should be set");
 }
 
+static void test_test_word_memory_sign_extended_immediate(void) {
+    uint16_t word = UINT16_C(0x8001);
+    uint64_t qword = UINT64_C(0xffffffff00000000);
+    uint64_t flags;
+
+    __asm__ volatile (
+        "testw $0x8001, %1\n\t"
+        "pushfq\n\tpopq %0"
+        : "=r"(flags) : "m"(word) : "cc"
+    );
+    TEST_ASSERT(word == UINT16_C(0x8001), "testw does not modify memory operand");
+    TEST_ASSERT(flags & SF_FLAG, "testw bit15 result: SF set");
+    TEST_ASSERT(!(flags & ZF_FLAG), "testw nonzero result: ZF clear");
+    TEST_ASSERT(!(flags & PF_FLAG), "testw low byte 0x01: PF clear");
+    TEST_ASSERT(!(flags & CF_FLAG), "testw clears CF");
+    TEST_ASSERT(!(flags & OF_FLAG), "testw clears OF");
+
+    __asm__ volatile (
+        "testq $-2147483648, %1\n\t"
+        "pushfq\n\tpopq %0"
+        : "=r"(flags) : "m"(qword) : "cc"
+    );
+    TEST_ASSERT(qword == UINT64_C(0xffffffff00000000),
+                "testq does not modify qword memory operand");
+    TEST_ASSERT(flags & SF_FLAG,
+                "testq imm32 sign extension reaches high 32 bits and sets SF");
+    TEST_ASSERT(!(flags & ZF_FLAG), "testq sign-extended immediate result is nonzero");
+    TEST_ASSERT(flags & PF_FLAG, "testq low result byte zero: PF set");
+    TEST_ASSERT(!(flags & CF_FLAG), "testq immediate clears CF");
+    TEST_ASSERT(!(flags & OF_FLAG), "testq immediate clears OF");
+}
+
 int main(void) {
     TEST_START("TEST instruction");
     test_test_zero();
@@ -139,5 +171,6 @@ int main(void) {
     test_test_pf();
     test_test_sizes();
     test_test_reg_reg();
+    test_test_word_memory_sign_extended_immediate();
     TEST_END();
 }

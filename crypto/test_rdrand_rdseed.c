@@ -16,6 +16,7 @@
 #include "../common.h"
 
 /* Check CPUID for RDRAND support (CPUID.01H:ECX.RDRAND[bit 30]) */
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int has_rdrand(void) {
     uint32_t ecx;
     __asm__ volatile (
@@ -27,8 +28,12 @@ static int has_rdrand(void) {
     );
     return (ecx >> 30) & 1;
 }
+#else
+#define has_rdrand() 1
+#endif
 
 /* Check CPUID for RDSEED support (CPUID.07H:EBX.RDSEED[bit 18]) */
+#if ENABLE_RUNTIME_CPU_CHECKS
 static int has_rdseed(void) {
     uint32_t ebx;
     __asm__ volatile (
@@ -41,6 +46,9 @@ static int has_rdseed(void) {
     );
     return (ebx >> 18) & 1;
 }
+#else
+#define has_rdseed() 1
+#endif
 
 /* Test RDRAND 16-bit */
 static void test_rdrand16(void) {

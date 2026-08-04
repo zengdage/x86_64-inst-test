@@ -174,6 +174,60 @@ static void test_rotate_sizes(void) {
     TEST_ASSERT(r8 == 0x03, "rolb 0x81 by 1: expected 0x03");
 }
 
+static void test_rotate_count_boundaries(void) {
+    uint64_t result;
+    uint64_t flags;
+
+    /* 64-bit rotate counts use only the low six bits: 65 becomes 1. */
+    __asm__ volatile (
+        "movq $1, %%rax\n\t"
+        "rolq $65, %%rax\n\t"
+        "movq %%rax, %0"
+        : "=r"(result)
+        :
+        : "rax", "cc"
+    );
+    TEST_ASSERT(result == 2, "rolq count=65: expected effective count 1");
+
+    __asm__ volatile (
+        "movq $1, %%rax\n\t"
+        "rorq $255, %%rax\n\t"     /* 255 & 63 = 63 */
+        "movq %%rax, %0"
+        : "=r"(result)
+        :
+        : "rax", "cc"
+    );
+    TEST_ASSERT(result == 2, "rorq count=255: expected effective count 63");
+
+    /* An effective zero count must preserve both the value and flags. */
+    __asm__ volatile (
+        "stc\n\t"
+        "movq $0x12345678, %%rax\n\t"
+        "rolq $64, %%rax\n\t"
+        "movq %%rax, %0\n\t"
+        "pushfq\n\t"
+        "popq %1"
+        : "=r"(result), "=r"(flags)
+        :
+        : "rax", "cc"
+    );
+    TEST_ASSERT(result == UINT64_C(0x12345678), "rolq count=64: value unchanged");
+    TEST_ASSERT(flags & CF_FLAG, "rolq effective count 0: CF preserved");
+
+    /* The CL form follows the same count masking rule. */
+    __asm__ volatile (
+        "stc\n\t"
+        "movq $0, %%rax\n\t"
+        "movb $65, %%cl\n\t"
+        "rclq %%cl, %%rax\n\t"
+        "movq %%rax, %0"
+        : "=r"(result)
+        :
+        : "rax", "rcx", "cc"
+    );
+    TEST_ASSERT(result == 1, "rclq CL=65: expected effective count 1");
+}
+
 int main(void) {
     TEST_START("ROL/ROR/RCL/RCR instructions");
     test_rol();
@@ -181,5 +235,6 @@ int main(void) {
     test_rcl();
     test_rcr();
     test_rotate_sizes();
+    test_rotate_count_boundaries();
     TEST_END();
 }

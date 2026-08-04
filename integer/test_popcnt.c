@@ -10,6 +10,13 @@
  */
 #include "../common.h"
 
+static void assert_popcnt_flags(uint64_t flags, int zf, const char *name) {
+    TEST_ASSERT(!!(flags & ZF_FLAG) == zf, "%s ZF=%d expected %d", name,
+                !!(flags & ZF_FLAG), zf);
+    TEST_ASSERT((flags & (CF_FLAG | PF_FLAG | AF_FLAG | SF_FLAG | OF_FLAG)) == 0,
+                "%s clears CF/PF/AF/SF/OF: flags=%#" PRIx64, name, flags);
+}
+
 static void test_popcnt_basic(void) {
     uint64_t result;
     uint64_t flags;
@@ -105,10 +112,49 @@ static void test_popcnt_16bit(void) {
     TEST_ASSERT(result == 16, "popcntw 0xFFFF: expected 16");
 }
 
+static void test_popcnt_width_writes_memory_and_flags(void) {
+    uint16_t source16 = UINT16_C(0x8001);
+    uint64_t result, flags;
+    __asm__ volatile (
+        "movq $-1, %%rcx\n\t"
+        "popcntw %2, %%cx\n\t"
+        "pushfq\n\tpopq %1\n\t"
+        "movq %%rcx, %0"
+        : "=r"(result), "=r"(flags) : "m"(source16)
+        : "rcx", "cc");
+    TEST_ASSERT(result == UINT64_C(0xffffffffffff0002),
+                "popcntw writes only low 16 destination bits: %#" PRIx64,
+                result);
+    assert_popcnt_flags(flags, 0, "popcntw memory 0x8001");
+
+    uint32_t source32 = 0;
+    __asm__ volatile (
+        "movq $-1, %%rcx\n\t"
+        "popcntl %2, %%ecx\n\t"
+        "pushfq\n\tpopq %1\n\t"
+        "movq %%rcx, %0"
+        : "=r"(result), "=r"(flags) : "m"(source32)
+        : "rcx", "cc");
+    TEST_ASSERT(result == 0,
+                "popcntl zero result clears upper 32 destination bits");
+    assert_popcnt_flags(flags, 1, "popcntl memory zero");
+
+    uint64_t source64 = UINT64_C(0x8000000100000001);
+    __asm__ volatile (
+        "popcntq %2, %%rcx\n\t"
+        "pushfq\n\tpopq %1\n\t"
+        "movq %%rcx, %0"
+        : "=r"(result), "=r"(flags) : "m"(source64)
+        : "rcx", "cc");
+    TEST_ASSERT(result == 3, "popcntq memory endpoint bits expected 3");
+    assert_popcnt_flags(flags, 0, "popcntq memory endpoint bits");
+}
+
 int main(void) {
     TEST_START("POPCNT instruction");
     test_popcnt_basic();
     test_popcnt_32bit();
     test_popcnt_16bit();
+    test_popcnt_width_writes_memory_and_flags();
     TEST_END();
 }
