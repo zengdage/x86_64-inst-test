@@ -131,7 +131,8 @@ int main(void) {
         "vmovaps %%zmm2, %0"
         : "=m"(dst) : "m"(a), "m"(b) : "zmm0", "zmm1", "zmm2"
     );
-    TEST_ASSERT(isnan(dst.f32[0]) && isnan(dst.f32[1]), "VADDPS inf cancellation and NaN");
+    TEST_ASSERT(IS_QNAN(dst.f32[0]) && IS_QNAN(dst.f32[1]),
+                "VADDPS inf cancellation and QNaN produce QNaNs");
     TEST_ASSERT(dst.f32[2] == 0.0f && signbit(dst.f32[2]), "VADDPS -0 + -0 = -0");
     TEST_ASSERT(isinf(dst.f32[3]) && dst.f32[3] > 0.0f, "VADDPS FLT_MAX overflow");
     TEST_ASSERT(dst.f32[4] == FLT_MIN, "VADDPS subnormal + subnormal = FLT_MIN");

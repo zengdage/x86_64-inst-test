@@ -56,7 +56,7 @@ static void test_mulsd(void) {
         : "m"(a), "m"(b)
         : "xmm0", "xmm1"
     );
-    TEST_ASSERT(isnan(result.f64[0]), "mulsd inf*0=NaN");
+    TEST_ASSERT(IS_QNAN(result.f64[0]), "mulsd inf*0=QNaN");
 
     /* Negative * Negative */
     a.f64[0] = -7.0;
@@ -84,7 +84,7 @@ static void test_mulsd(void) {
         : "m"(a), "m"(b)
         : "xmm0", "xmm1"
     );
-    TEST_ASSERT(isnan(result.f64[0]), "mulsd NaN*5=NaN");
+    TEST_ASSERT(IS_QNAN(result.f64[0]), "mulsd QNaN*5=QNaN");
 }
 
 static void test_mulsd_mem(void) {
@@ -148,7 +148,7 @@ static void test_divsd(void) {
         : "m"(a), "m"(b)
         : "xmm0", "xmm1"
     );
-    TEST_ASSERT(isnan(result.f64[0]), "divsd 0/0=NaN");
+    TEST_ASSERT(IS_QNAN(result.f64[0]), "divsd 0/0=QNaN");
 
     /* Inf / Inf = NaN */
     a.f64[0] = INFINITY;
@@ -162,7 +162,7 @@ static void test_divsd(void) {
         : "m"(a), "m"(b)
         : "xmm0", "xmm1"
     );
-    TEST_ASSERT(isnan(result.f64[0]), "divsd inf/inf=NaN");
+    TEST_ASSERT(IS_QNAN(result.f64[0]), "divsd inf/inf=QNaN");
 
     /* Denormal result */
     a.f64[0] = DBL_MIN;

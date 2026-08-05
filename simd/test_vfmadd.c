@@ -144,7 +144,7 @@ static void test_vfmadd_special_and_fused(void) {
     volatile double rounded_product = a.f64[0] * multiplier.f64[0];
     TEST_ASSERT(rounded_product + addend.f64[0] == 0.0,
         "vfmadd ordinary multiply/add discriminator cancels");
-    TEST_ASSERT(isnan(dst.f64[1]), "vfmadd Inf * 0 is NaN");
+    TEST_ASSERT(IS_QNAN(dst.f64[1]), "vfmadd Inf * 0 is QNaN");
 
     a.f32[0] = NAN; a.f32[1] = INFINITY; a.f32[2] = FLT_MAX; a.f32[3] = -0.0f;
     addend.f32[0] = 1.0f; addend.f32[1] = 1.0f; addend.f32[2] = 0.0f; addend.f32[3] = -0.0f;
@@ -156,8 +156,8 @@ static void test_vfmadd_special_and_fused(void) {
         "vmovaps %%xmm0, %0"
         : "=m"(dst) : "m"(a), "m"(addend), "m"(multiplier) : "xmm0", "xmm1"
     );
-    TEST_ASSERT(isnan(dst.f32[0]), "vfmadd NaN propagation");
-    TEST_ASSERT(isnan(dst.f32[1]), "vfmadd Inf * 0 is NaN (float)");
+    TEST_ASSERT(IS_QNAN(dst.f32[0]), "vfmadd QNaN propagation");
+    TEST_ASSERT(IS_QNAN(dst.f32[1]), "vfmadd Inf * 0 is QNaN (float)");
     TEST_ASSERT(isinf(dst.f32[2]) && !signbit(dst.f32[2]), "vfmadd overflow is +Inf");
     TEST_ASSERT(dst.f32[3] == 0.0f && signbit(dst.f32[3]), "vfmadd negative zero");
 

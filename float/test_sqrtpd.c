@@ -52,8 +52,8 @@ static void test_sqrtpd_special(void) {
         : "m"(a)
         : "xmm0"
     );
-    TEST_ASSERT(isnan(result.f64[0]), "sqrtpd sqrt(-1)=NaN");
-    TEST_ASSERT(isnan(result.f64[1]), "sqrtpd sqrt(NaN)=NaN");
+    TEST_ASSERT(IS_QNAN(result.f64[0]), "sqrtpd sqrt(-1)=QNaN");
+    TEST_ASSERT(IS_QNAN(result.f64[1]), "sqrtpd sqrt(QNaN)=QNaN");
 
     /* -0 and 1 */
     a.f64[0] = -0.0; a.f64[1] = 1.0;
@@ -159,6 +159,8 @@ static void test_sqrtpd_exact_nan_bits_and_invalid(void) {
     __asm__ volatile ("ldmxcsr %0" : : "m"(old_mxcsr));
     TEST_ASSERT(memcmp(&result, &expected, sizeof(expected)) == 0,
                 "SQRTPD preserves QNaN payload and quiets SNaN exactly");
+    TEST_ASSERT(IS_QNAN(result.f64[0]) && IS_QNAN(result.f64[1]) &&
+                !IS_SNAN(result.f64[1]), "SQRTPD NaN results are QNaNs");
     TEST_ASSERT(after_mxcsr & 1, "SQRTPD SNaN sets MXCSR invalid flag");
 }
 

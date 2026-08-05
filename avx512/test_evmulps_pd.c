@@ -122,12 +122,12 @@ int main(void) {
         "vmulps %%zmm1, %%zmm0, %%zmm2\n\t" "vmovaps %%zmm2, %0"
         : "=m"(dst) : "m"(a), "m"(b) : "zmm0", "zmm1", "zmm2"
     );
-    TEST_ASSERT(isnan(dst.f32[0]), "VMULPS 0*Inf is NaN");
+    TEST_ASSERT(IS_QNAN(dst.f32[0]), "VMULPS 0*Inf is QNaN");
     TEST_ASSERT(dst.f32[1] == 0.0f && signbit(dst.f32[1]), "VMULPS signed zero");
     TEST_ASSERT(isinf(dst.f32[2]) && signbit(dst.f32[2]), "VMULPS Inf*negative is -Inf");
     TEST_ASSERT(isinf(dst.f32[3]) && !signbit(dst.f32[3]), "VMULPS overflow");
     TEST_ASSERT(dst.f32[4] == FLT_MIN / 2.0f, "VMULPS subnormal");
-    TEST_ASSERT(isnan(dst.f32[5]), "VMULPS NaN propagation");
+    TEST_ASSERT(IS_QNAN(dst.f32[5]), "VMULPS QNaN propagation");
 
     a.f64[0] = 0.0; b.f64[0] = INFINITY;
     a.f64[1] = -0.0; b.f64[1] = 2.0;
@@ -139,7 +139,7 @@ int main(void) {
         "vmulpd %%zmm1, %%zmm0, %%zmm2\n\t" "vmovapd %%zmm2, %0"
         : "=m"(dst) : "m"(a), "m"(b) : "zmm0", "zmm1", "zmm2"
     );
-    TEST_ASSERT(isnan(dst.f64[0]), "VMULPD 0*Inf is NaN");
+    TEST_ASSERT(IS_QNAN(dst.f64[0]), "VMULPD 0*Inf is QNaN");
     TEST_ASSERT(dst.f64[1] == 0.0 && signbit(dst.f64[1]), "VMULPD signed zero");
     TEST_ASSERT(isinf(dst.f64[2]), "VMULPD overflow");
     TEST_ASSERT(dst.f64[3] == DBL_MIN / 2.0, "VMULPD subnormal");

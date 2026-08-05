@@ -47,7 +47,7 @@ static void test_minps_special(void) {
         : "xmm0", "xmm1"
     );
     TEST_ASSERT(result.f32[0] == 5.0f, "minps(NaN,5)=5 (source returned)");
-    TEST_ASSERT(isnan(result.f32[1]), "minps(5,NaN)=NaN (source returned)");
+    TEST_ASSERT(IS_QNAN(result.f32[1]), "minps(5,QNaN)=QNaN (source returned)");
     TEST_ASSERT(isinf(result.f32[2]) && result.f32[2] < 0, "minps(-inf,FLT_MAX)=-inf");
     TEST_ASSERT(result.f32[3] == 0.0f && signbit(result.f32[3]),
                 "minps(+0,-0)=-0 (source returned)");
@@ -108,7 +108,7 @@ static void test_maxps_special(void) {
         : "xmm0", "xmm1"
     );
     TEST_ASSERT(result.f32[0] == 5.0f, "maxps(NaN,5)=5 (source returned)");
-    TEST_ASSERT(isnan(result.f32[1]), "maxps(5,NaN)=NaN (source returned)");
+    TEST_ASSERT(IS_QNAN(result.f32[1]), "maxps(5,QNaN)=QNaN (source returned)");
     TEST_ASSERT(isinf(result.f32[2]) && result.f32[2] > 0, "maxps(inf,FLT_MAX)=inf");
     TEST_ASSERT(result.f32[3] == -10.0f, "maxps(-10,-20)=-10");
 }
@@ -186,6 +186,9 @@ static void test_minmaxps_exact_source_selection_and_snan(void) {
                 "MINPS returns exact second operand for equal zeros and NaNs");
     TEST_ASSERT(memcmp(&max_result, &b, sizeof(b)) == 0,
                 "MAXPS returns exact second operand for equal zeros and NaNs");
+    TEST_ASSERT(IS_QNAN(min_result.f32[2]) && IS_QNAN(max_result.f32[2]) &&
+                IS_SNAN(min_result.f32[3]) && IS_SNAN(max_result.f32[3]),
+                "MINPS/MAXPS preserve selected QNaN/SNaN classification");
     TEST_ASSERT(after_mxcsr & 1, "MINPS/MAXPS SNaN sets MXCSR invalid flag");
 }
 

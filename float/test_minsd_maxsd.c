@@ -99,7 +99,7 @@ static void test_minsd(void) {
         : "m"(a), "m"(b)
         : "xmm0", "xmm1"
     );
-    TEST_ASSERT(isnan(result.f64[0]), "minsd(5,NaN)=NaN");
+    TEST_ASSERT(IS_QNAN(result.f64[0]), "minsd(5,QNaN)=QNaN");
 
     /* +0 vs -0 */
     a.f64[0] = 0.0;
@@ -251,6 +251,8 @@ static void test_minmaxsd_exact_bits_upper_lane_and_snan(void) {
                 "MINSD exact SNaN source and destination upper lane");
     TEST_ASSERT(memcmp(&max_result, &expected, sizeof(expected)) == 0,
                 "MAXSD exact SNaN source and destination upper lane");
+    TEST_ASSERT(IS_SNAN(min_result.f64[0]) && IS_SNAN(max_result.f64[0]),
+                "MINSD/MAXSD preserve selected SNaN classification");
     TEST_ASSERT(after_mxcsr & 1, "MINSD/MAXSD SNaN sets MXCSR invalid flag");
 
     a.u64[0] = UINT64_C(0x8000000000000000);

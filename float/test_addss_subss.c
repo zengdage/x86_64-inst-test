@@ -72,7 +72,7 @@ static void test_addss_basic(void) {
         : "m"(a), "m"(b)
         : "xmm0", "xmm1"
     );
-    TEST_ASSERT(isnan(result.f32[0]), "addss inf+(-inf) = NaN");
+    TEST_ASSERT(IS_QNAN(result.f32[0]), "addss inf+(-inf) = QNaN");
 
     /* NaN + x = NaN */
     a.f32[0] = NAN;
@@ -86,7 +86,7 @@ static void test_addss_basic(void) {
         : "m"(a), "m"(b)
         : "xmm0", "xmm1"
     );
-    TEST_ASSERT(isnan(result.f32[0]), "addss NaN+5 = NaN");
+    TEST_ASSERT(IS_QNAN(result.f32[0]), "addss QNaN+5 = QNaN");
 
     /* Negative numbers */
     a.f32[0] = -10.0f;
@@ -164,7 +164,7 @@ static void test_subss_basic(void) {
         : "m"(a), "m"(b)
         : "xmm0", "xmm1"
     );
-    TEST_ASSERT(isnan(result.f32[0]), "subss inf-inf = NaN");
+    TEST_ASSERT(IS_QNAN(result.f32[0]), "subss inf-inf = QNaN");
 
     /* Denormal */
     a.f32[0] = FLT_MIN;

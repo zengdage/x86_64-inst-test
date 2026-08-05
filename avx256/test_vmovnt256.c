@@ -147,6 +147,8 @@ static void test_vmovnt_fp_bit_patterns(void) {
                     "vmovntps preserves +0/-0, Inf, NaN and subnormal bits lane %d: %#x",
                     i, dst.u32[i]);
     }
+    TEST_ASSERT(IS_QNAN(dst.f32[4]) && IS_SNAN(dst.f32[5]),
+                "vmovntps preserves QNaN/SNaN classification");
 
     src = (ymm_t){ .u64 = {
         UINT64_C(0x0000000000000000), UINT64_C(0x8000000000000000),
@@ -163,6 +165,8 @@ static void test_vmovnt_fp_bit_patterns(void) {
                     "vmovntpd preserves signed zero and NaN/Inf payload bits lane %d: %#" PRIx64,
                     i, dst.u64[i]);
     }
+    TEST_ASSERT(IS_QNAN(dst.f64[2]) && IS_SNAN(dst.f64[3]),
+                "vmovntpd preserves QNaN/SNaN classification");
 }
 
 int main(void) {

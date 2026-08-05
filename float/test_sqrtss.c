@@ -77,7 +77,7 @@ static void test_sqrtss_basic(void) {
         : "m"(a)
         : "xmm0"
     );
-    TEST_ASSERT(isnan(result.f32[0]), "sqrtss(-1)=NaN");
+    TEST_ASSERT(IS_QNAN(result.f32[0]), "sqrtss(-1)=QNaN");
 
     /* sqrt(NaN) = NaN */
     a.f32[0] = NAN;
@@ -89,7 +89,7 @@ static void test_sqrtss_basic(void) {
         : "m"(a)
         : "xmm0"
     );
-    TEST_ASSERT(isnan(result.f32[0]), "sqrtss(NaN)=NaN");
+    TEST_ASSERT(IS_QNAN(result.f32[0]), "sqrtss(QNaN)=QNaN");
 
     /* sqrt(2) ~ 1.41421 */
     a.f32[0] = 2.0f;
@@ -271,6 +271,8 @@ static void test_sqrtss_exact_snan_and_upper_lanes(void) {
     __asm__ volatile ("ldmxcsr %0" : : "m"(old_mxcsr));
     TEST_ASSERT(memcmp(&result, &expected, sizeof(expected)) == 0,
                 "SQRTSS quiets SNaN and preserves exact destination upper lanes");
+    TEST_ASSERT(IS_QNAN(result.f32[0]) && !IS_SNAN(result.f32[0]),
+                "SQRTSS SNaN result is QNaN");
     TEST_ASSERT(after_mxcsr & 1, "SQRTSS SNaN sets MXCSR invalid flag");
 
     src.u32[0] = UINT32_C(0x80000000);

@@ -93,13 +93,14 @@ static void test_vaddsub_special(void) {
         "vaddsubps %%ymm1, %%ymm0, %%ymm2\n\t" "vmovups %%ymm2, %0"
         : "=m"(r) : "m"(a), "m"(b) : "ymm0", "ymm1", "ymm2"
     );
-    TEST_ASSERT(isnan(r[0]), "vaddsubps even Inf-Inf is NaN");
+    TEST_ASSERT(IS_QNAN(r[0]), "vaddsubps even Inf-Inf is QNaN");
     TEST_ASSERT(isinf(r[1]) && signbit(r[1]), "vaddsubps odd -Inf+-Inf is -Inf");
     TEST_ASSERT(r[2] == 0.0f && signbit(r[2]), "vaddsubps even -0-+0 is -0");
     TEST_ASSERT(r[3] == 0.0f && signbit(r[3]), "vaddsubps odd -0+-0 is -0");
     TEST_ASSERT(isinf(r[4]) && !signbit(r[4]), "vaddsubps even overflow");
     TEST_ASSERT(r[5] == FLT_MIN * 1.5f, "vaddsubps odd subnormal add");
-    TEST_ASSERT(isnan(r[6]) && isnan(r[7]), "vaddsubps NaN and Inf cancellation");
+    TEST_ASSERT(IS_QNAN(r[6]) && IS_QNAN(r[7]),
+                "vaddsubps QNaN and Inf cancellation produce QNaNs");
 
     double da[4] = {INFINITY, -0.0, DBL_MAX, DBL_MIN};
     double db[4] = {INFINITY, -0.0, -DBL_MAX, DBL_MIN / 2.0};
@@ -109,7 +110,7 @@ static void test_vaddsub_special(void) {
         "vaddsubpd %%ymm1, %%ymm0, %%ymm2\n\t" "vmovupd %%ymm2, %0"
         : "=m"(dr) : "m"(da), "m"(db) : "ymm0", "ymm1", "ymm2"
     );
-    TEST_ASSERT(isnan(dr[0]), "vaddsubpd even Inf-Inf is NaN");
+    TEST_ASSERT(IS_QNAN(dr[0]), "vaddsubpd even Inf-Inf is QNaN");
     TEST_ASSERT(dr[1] == 0.0 && signbit(dr[1]), "vaddsubpd odd -0+-0 is -0");
     TEST_ASSERT(isinf(dr[2]), "vaddsubpd even overflow");
     TEST_ASSERT(dr[3] == DBL_MIN * 1.5, "vaddsubpd odd subnormal add");

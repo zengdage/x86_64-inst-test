@@ -171,7 +171,7 @@ static void test_roundss_special(void) {
         : "m"(a)
         : "xmm0"
     );
-    TEST_ASSERT(isnan(result.f32[0]), "roundss NaN=NaN");
+    TEST_ASSERT(IS_QNAN(result.f32[0]), "roundss QNaN=QNaN");
 
     /* Zero stays zero */
     a.f32[0] = 0.0f;
@@ -343,7 +343,7 @@ static void test_roundsd_special(void) {
         : "m"(a)
         : "xmm0"
     );
-    TEST_ASSERT(isnan(result.f64[0]), "roundsd NaN=NaN");
+    TEST_ASSERT(IS_QNAN(result.f64[0]), "roundsd QNaN=QNaN");
 
     a.f64[0] = -0.0;
     __asm__ volatile (
@@ -413,6 +413,8 @@ static void test_scalar_round_mxcsr_and_exceptions(void) {
     __asm__ volatile("stmxcsr %0" : "=m"(csr));
     TEST_ASSERT(r.u32[0] == UINT32_C(0x7fc12345),
                 "roundss quiets SNaN with exact payload");
+    TEST_ASSERT(IS_QNAN(r.f32[0]) && !IS_SNAN(r.f32[0]),
+                "roundss SNaN result is QNaN");
     TEST_ASSERT(r.u32[1] == src1.u32[1] && r.u32[2] == src1.u32[2] &&
                 r.u32[3] == src1.u32[3], "roundss SNaN preserves source1 upper lanes");
     TEST_ASSERT(csr & 1u, "roundss SNaN sets invalid despite imm bit3");
@@ -457,6 +459,8 @@ static void test_scalar_round_mxcsr_and_exceptions(void) {
     __asm__ volatile("stmxcsr %0" : "=m"(csr));
     TEST_ASSERT(r.u64[0] == UINT64_C(0x7ff8000000001234),
                 "roundsd quiets SNaN with exact payload");
+    TEST_ASSERT(IS_QNAN(r.f64[0]) && !IS_SNAN(r.f64[0]),
+                "roundsd SNaN result is QNaN");
     TEST_ASSERT(r.u64[1] == sd1.u64[1], "roundsd SNaN preserves source1 upper lane");
     TEST_ASSERT(csr & 1u, "roundsd SNaN sets invalid despite imm bit3");
     __asm__ volatile("ldmxcsr %0" : : "m"(saved));

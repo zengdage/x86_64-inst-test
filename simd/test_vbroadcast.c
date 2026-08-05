@@ -119,6 +119,9 @@ static void test_vbroadcast_bit_patterns(void) {
         for (int i = 0; i < 8; i++)
             TEST_ASSERT(dst.u32[i] == value,
                         "vbroadcastss bit pattern %#x lane %d got %#x", value, i, dst.u32[i]);
+        if (value == UINT32_C(0x7fc12345))
+            for (int i = 0; i < 8; i++)
+                TEST_ASSERT(IS_QNAN(dst.f32[i]), "vbroadcastss QNaN lane %d", i);
     }
 
     static const uint64_t dbits[] = {
@@ -138,6 +141,9 @@ static void test_vbroadcast_bit_patterns(void) {
             TEST_ASSERT(dst.u64[i] == value,
                         "vbroadcastsd bit pattern %#" PRIx64 " lane %d got %#" PRIx64,
                         value, i, dst.u64[i]);
+        if (value == UINT64_C(0x7ff8123456789abc))
+            for (int i = 0; i < 4; i++)
+                TEST_ASSERT(IS_QNAN(dst.f64[i]), "vbroadcastsd QNaN lane %d", i);
     }
 
     /* Register source must use only the low element. */

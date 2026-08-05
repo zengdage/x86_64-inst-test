@@ -46,7 +46,7 @@ static void test_minpd_special(void) {
         : "xmm0", "xmm1"
     );
     TEST_ASSERT(result.f64[0] == 5.0, "minpd(NaN,5)=5");
-    TEST_ASSERT(isnan(result.f64[1]), "minpd(5,NaN)=NaN");
+    TEST_ASSERT(IS_QNAN(result.f64[1]), "minpd(5,QNaN)=QNaN");
 
     /* -Inf and +0 vs -0 */
     a.f64[0] = -INFINITY; a.f64[1] = 0.0;
@@ -183,6 +183,8 @@ static void test_minmaxpd_exact_source_selection_and_snan(void) {
                 "MINPD returns exact second operand for equal zero and SNaN");
     TEST_ASSERT(memcmp(&max_result, &b, sizeof(b)) == 0,
                 "MAXPD returns exact second operand for equal zero and SNaN");
+    TEST_ASSERT(IS_SNAN(min_result.f64[1]) && IS_SNAN(max_result.f64[1]),
+                "MINPD/MAXPD preserve selected SNaN classification");
     TEST_ASSERT(after_mxcsr & 1, "MINPD/MAXPD SNaN sets MXCSR invalid flag");
 
     /* Reversing equal signed zeros must reverse the selected zero sign. */

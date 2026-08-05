@@ -34,6 +34,8 @@
     ); \
     TEST_ASSERT(memcmp(&result, &q_expected, sizeof(result)) == 0, \
                 name " preserves qNaN sign and payload in every lane"); \
+    TEST_ASSERT(IS_QNAN(result.f64[0]) && IS_QNAN(result.f64[1]), \
+                name " qNaN results remain qNaNs"); \
     TEST_ASSERT((after_mxcsr & 1u) == 0, name " qNaN leaves MXCSR invalid clear"); \
     __asm__ volatile ( \
         "ldmxcsr %[clean]\n\tmovapd %[lhs], %%xmm0\n\t" \
@@ -45,6 +47,9 @@
     __asm__ volatile ("ldmxcsr %0" : : "m"(old_mxcsr) : "memory"); \
     TEST_ASSERT(memcmp(&result, &s_expected, sizeof(result)) == 0, \
                 name " quiets sNaN and preserves sign/payload in every lane"); \
+    TEST_ASSERT(IS_QNAN(result.f64[0]) && IS_QNAN(result.f64[1]) && \
+                !IS_SNAN(result.f64[0]) && !IS_SNAN(result.f64[1]), \
+                name " sNaN results are qNaNs"); \
     TEST_ASSERT(after_mxcsr & 1u, name " sNaN sets MXCSR invalid"); \
 } while (0)
 
@@ -80,8 +85,8 @@ static void test_mulpd_special(void) {
         : "m"(a), "m"(b)
         : "xmm0", "xmm1"
     );
-    TEST_ASSERT(isnan(result.f64[0]), "mulpd inf*0=NaN");
-    TEST_ASSERT(isnan(result.f64[1]), "mulpd NaN*42=NaN");
+    TEST_ASSERT(IS_QNAN(result.f64[0]), "mulpd inf*0=QNaN");
+    TEST_ASSERT(IS_QNAN(result.f64[1]), "mulpd QNaN*42=QNaN");
 
     /* Negative * Negative */
     a.f64[0] = -7.0; a.f64[1] = -3.0;
@@ -150,7 +155,7 @@ static void test_divpd_special(void) {
         : "xmm0", "xmm1"
     );
     TEST_ASSERT(isinf(result.f64[0]) && result.f64[0] > 0, "divpd 1/0=+inf");
-    TEST_ASSERT(isnan(result.f64[1]), "divpd 0/0=NaN");
+    TEST_ASSERT(IS_QNAN(result.f64[1]), "divpd 0/0=QNaN");
 
     /* Inf / Inf; denormal / 2 */
     a.f64[0] = INFINITY; a.f64[1] = DBL_MIN;
@@ -164,7 +169,7 @@ static void test_divpd_special(void) {
         : "m"(a), "m"(b)
         : "xmm0", "xmm1"
     );
-    TEST_ASSERT(isnan(result.f64[0]), "divpd inf/inf=NaN");
+    TEST_ASSERT(IS_QNAN(result.f64[0]), "divpd inf/inf=QNaN");
     TEST_ASSERT(result.f64[1] == DBL_MIN / 2.0, "divpd DBL_MIN/2=denormal");
 }
 

@@ -127,7 +127,8 @@ int main(void) {
         "vmovaps %%zmm2, %0"
         : "=m"(dst) : "m"(a), "m"(b) : "zmm0", "zmm1", "zmm2"
     );
-    TEST_ASSERT(dst.f32[0] == 1.0f && isnan(dst.f32[1]), "VMAXPS NaN source ordering");
+    TEST_ASSERT(dst.f32[0] == 1.0f && IS_QNAN(dst.f32[1]),
+                "VMAXPS QNaN source ordering");
     TEST_ASSERT(dst.f32[2] == 0.0f && signbit(dst.f32[2]), "VMAXPS +0,-0 returns -0");
     TEST_ASSERT(dst.f32[3] == 0.0f && !signbit(dst.f32[3]), "VMAXPS -0,+0 returns +0");
 
@@ -138,7 +139,8 @@ int main(void) {
         "vmovaps %%zmm2, %0"
         : "=m"(dst) : "m"(a), "m"(b) : "zmm0", "zmm1", "zmm2"
     );
-    TEST_ASSERT(dst.f32[0] == 1.0f && isnan(dst.f32[1]), "VMINPS NaN source ordering");
+    TEST_ASSERT(dst.f32[0] == 1.0f && IS_QNAN(dst.f32[1]),
+                "VMINPS QNaN source ordering");
     TEST_ASSERT(dst.f32[2] == 0.0f && signbit(dst.f32[2]), "VMINPS +0,-0 returns -0");
     TEST_ASSERT(dst.f32[3] == 0.0f && !signbit(dst.f32[3]), "VMINPS -0,+0 returns +0");
 

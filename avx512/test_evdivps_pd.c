@@ -111,7 +111,8 @@ int main(void) {
     );
     TEST_ASSERT(isinf(dst.f32[0]) && dst.f32[0] > 0.0f, "VDIVPS 1/+0 = +inf");
     TEST_ASSERT(isinf(dst.f32[1]) && dst.f32[1] < 0.0f, "VDIVPS -1/+0 = -inf");
-    TEST_ASSERT(isnan(dst.f32[2]) && isnan(dst.f32[3]), "VDIVPS 0/0 and inf/inf = NaN");
+    TEST_ASSERT(IS_QNAN(dst.f32[2]) && IS_QNAN(dst.f32[3]),
+                "VDIVPS 0/0 and inf/inf produce QNaNs");
     TEST_ASSERT(dst.f32[4] == 0.0f && !signbit(dst.f32[4]), "VDIVPS 1/+inf = +0");
 
     /* Masked-off zero divisors must not set the MXCSR divide-by-zero flag. */

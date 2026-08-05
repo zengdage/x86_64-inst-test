@@ -47,6 +47,8 @@
     ); \
     TEST_ASSERT(memcmp(&result, &q_expected, sizeof(result)) == 0, \
                 name " preserves qNaN sign and payload in every lane"); \
+    for (int lane = 0; lane < 8; lane++) \
+        TEST_ASSERT(IS_QNAN(result.f32[lane]), name " qNaN lane %d remains qNaN", lane); \
     TEST_ASSERT((after_mxcsr & 1u) == 0, name " qNaN leaves MXCSR invalid clear"); \
     __asm__ volatile ( \
         "ldmxcsr %[clean]\n\tvmovaps %[lhs], %%ymm0\n\t" \
@@ -58,6 +60,9 @@
     __asm__ volatile ("ldmxcsr %0" : : "m"(old_mxcsr) : "memory"); \
     TEST_ASSERT(memcmp(&result, &s_expected, sizeof(result)) == 0, \
                 name " quiets sNaN and preserves sign/payload in every lane"); \
+    for (int lane = 0; lane < 8; lane++) \
+        TEST_ASSERT(IS_QNAN(result.f32[lane]) && !IS_SNAN(result.f32[lane]), \
+                    name " sNaN lane %d result is qNaN", lane); \
     TEST_ASSERT(after_mxcsr & 1u, name " sNaN sets MXCSR invalid"); \
 } while (0)
 
@@ -98,6 +103,8 @@
     ); \
     TEST_ASSERT(memcmp(&result, &q_expected, sizeof(result)) == 0, \
                 name " preserves qNaN sign and payload in every lane"); \
+    for (int lane = 0; lane < 4; lane++) \
+        TEST_ASSERT(IS_QNAN(result.f64[lane]), name " qNaN lane %d remains qNaN", lane); \
     TEST_ASSERT((after_mxcsr & 1u) == 0, name " qNaN leaves MXCSR invalid clear"); \
     __asm__ volatile ( \
         "ldmxcsr %[clean]\n\tvmovapd %[lhs], %%ymm0\n\t" \
@@ -109,6 +116,9 @@
     __asm__ volatile ("ldmxcsr %0" : : "m"(old_mxcsr) : "memory"); \
     TEST_ASSERT(memcmp(&result, &s_expected, sizeof(result)) == 0, \
                 name " quiets sNaN and preserves sign/payload in every lane"); \
+    for (int lane = 0; lane < 4; lane++) \
+        TEST_ASSERT(IS_QNAN(result.f64[lane]) && !IS_SNAN(result.f64[lane]), \
+                    name " sNaN lane %d result is qNaN", lane); \
     TEST_ASSERT(after_mxcsr & 1u, name " sNaN sets MXCSR invalid"); \
 } while (0)
 
@@ -216,13 +226,13 @@ static void test_mul_div_special_values(void) {
         "vmovaps %%ymm1, %0"
         : "=m"(dst) : "m"(a), "m"(b) : "ymm0", "ymm1"
     );
-    TEST_ASSERT(isnan(dst.f32[0]), "vmulps 0 * Inf is NaN");
+    TEST_ASSERT(IS_QNAN(dst.f32[0]), "vmulps 0 * Inf is QNaN");
     TEST_ASSERT(dst.f32[1] == 0.0f && signbit(dst.f32[1]), "vmulps -0 * positive is -0");
     TEST_ASSERT(isinf(dst.f32[2]) && signbit(dst.f32[2]), "vmulps +Inf * negative is -Inf");
     TEST_ASSERT(isinf(dst.f32[3]) && !signbit(dst.f32[3]), "vmulps overflow to +Inf");
     TEST_ASSERT(dst.f32[4] == FLT_MIN / 2.0f, "vmulps subnormal result");
-    TEST_ASSERT(isnan(dst.f32[5]), "vmulps NaN propagation");
-    TEST_ASSERT(isnan(dst.f32[6]), "vmulps Inf * zero is NaN");
+    TEST_ASSERT(IS_QNAN(dst.f32[5]), "vmulps QNaN propagation");
+    TEST_ASSERT(IS_QNAN(dst.f32[6]), "vmulps Inf * zero is QNaN");
     TEST_ASSERT(dst.f32[7] == 0.0f, "vmulps minimum subnormal underflows to zero");
 
     a.f32[0] = INFINITY; a.f32[1] = 0.0f; a.f32[2] = 1.0f; a.f32[3] = -1.0f;
@@ -235,14 +245,14 @@ static void test_mul_div_special_values(void) {
         "vmovaps %%ymm1, %0"
         : "=m"(dst) : "m"(a), "m"(b) : "ymm0", "ymm1"
     );
-    TEST_ASSERT(isnan(dst.f32[0]), "vdivps Inf / Inf is NaN");
-    TEST_ASSERT(isnan(dst.f32[1]), "vdivps 0 / 0 is NaN");
+    TEST_ASSERT(IS_QNAN(dst.f32[0]), "vdivps Inf / Inf is QNaN");
+    TEST_ASSERT(IS_QNAN(dst.f32[1]), "vdivps 0 / 0 is QNaN");
     TEST_ASSERT(isinf(dst.f32[2]) && !signbit(dst.f32[2]), "vdivps 1 / +0 is +Inf");
     TEST_ASSERT(isinf(dst.f32[3]) && signbit(dst.f32[3]), "vdivps -1 / +0 is -Inf");
     TEST_ASSERT(dst.f32[4] == 0.0f && !signbit(dst.f32[4]), "vdivps 1 / Inf is +0");
     TEST_ASSERT(dst.f32[5] == 0.0f && signbit(dst.f32[5]), "vdivps -0 / positive is -0");
     TEST_ASSERT(dst.f32[6] == FLT_MIN / 2.0f, "vdivps subnormal result");
-    TEST_ASSERT(isnan(dst.f32[7]), "vdivps NaN propagation");
+    TEST_ASSERT(IS_QNAN(dst.f32[7]), "vdivps QNaN propagation");
 
     a.f64[0] = 0.0; a.f64[1] = -0.0; a.f64[2] = INFINITY; a.f64[3] = DBL_MAX;
     b.f64[0] = INFINITY; b.f64[1] = 2.0; b.f64[2] = -2.0; b.f64[3] = 2.0;
@@ -252,7 +262,7 @@ static void test_mul_div_special_values(void) {
         "vmovapd %%ymm1, %0"
         : "=m"(dst) : "m"(a), "m"(b) : "ymm0", "ymm1"
     );
-    TEST_ASSERT(isnan(dst.f64[0]), "vmulpd 0 * Inf is NaN");
+    TEST_ASSERT(IS_QNAN(dst.f64[0]), "vmulpd 0 * Inf is QNaN");
     TEST_ASSERT(dst.f64[1] == 0.0 && signbit(dst.f64[1]), "vmulpd -0 * positive is -0");
     TEST_ASSERT(isinf(dst.f64[2]) && signbit(dst.f64[2]), "vmulpd +Inf * negative is -Inf");
     TEST_ASSERT(isinf(dst.f64[3]) && !signbit(dst.f64[3]), "vmulpd overflow to +Inf");
@@ -265,8 +275,8 @@ static void test_mul_div_special_values(void) {
         "vmovapd %%ymm1, %0"
         : "=m"(dst) : "m"(a), "m"(b) : "ymm0", "ymm1"
     );
-    TEST_ASSERT(isnan(dst.f64[0]), "vdivpd Inf / Inf is NaN");
-    TEST_ASSERT(isnan(dst.f64[1]), "vdivpd 0 / 0 is NaN");
+    TEST_ASSERT(IS_QNAN(dst.f64[0]), "vdivpd Inf / Inf is QNaN");
+    TEST_ASSERT(IS_QNAN(dst.f64[1]), "vdivpd 0 / 0 is QNaN");
     TEST_ASSERT(dst.f64[2] == 0.0 && !signbit(dst.f64[2]), "vdivpd 1 / Inf is +0");
     TEST_ASSERT(dst.f64[3] == DBL_MIN / 2.0, "vdivpd subnormal result");
 }

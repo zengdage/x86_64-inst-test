@@ -100,7 +100,7 @@ static void test_conversion_boundaries(void) {
         "vmovaps %%ymm1, %0"
         : "=m"(ydst) : "m"(src) : "zmm0", "ymm1"
     );
-    TEST_ASSERT(isnan(ydst.f32[0]), "VCVTPD2PS NaN propagation");
+    TEST_ASSERT(IS_QNAN(ydst.f32[0]), "VCVTPD2PS QNaN propagation");
     TEST_ASSERT(isinf(ydst.f32[1]) && !signbit(ydst.f32[1]), "VCVTPD2PS +Inf");
     TEST_ASSERT(isinf(ydst.f32[2]) && signbit(ydst.f32[2]), "VCVTPD2PS -Inf");
     TEST_ASSERT(isinf(ydst.f32[3]) && !signbit(ydst.f32[3]), "VCVTPD2PS overflow to +Inf");

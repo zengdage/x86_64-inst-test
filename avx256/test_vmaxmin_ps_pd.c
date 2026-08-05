@@ -204,7 +204,7 @@ static void test_vmaxmin_special_values(void) {
         : "=m"(r[0]) : "m"(a[0]), "m"(b[0]) : "ymm0", "ymm1"
     );
     TEST_ASSERT(r[0] == 1.0, "vmaxpd NaN in first source returns second source");
-    TEST_ASSERT(isnan(r[1]), "vmaxpd NaN in second source propagates second source");
+    TEST_ASSERT(IS_QNAN(r[1]), "vmaxpd QNaN in second source preserves classification");
     TEST_ASSERT(r[2] == 0.0 && signbit(r[2]), "vmaxpd +0,-0 returns second -0");
     TEST_ASSERT(r[3] == 0.0 && !signbit(r[3]), "vmaxpd -0,+0 returns second +0");
 
@@ -215,7 +215,7 @@ static void test_vmaxmin_special_values(void) {
         : "=m"(r[0]) : "m"(a[0]), "m"(b[0]) : "ymm0", "ymm1"
     );
     TEST_ASSERT(r[0] == 1.0, "vminpd NaN in first source returns second source");
-    TEST_ASSERT(isnan(r[1]), "vminpd NaN in second source propagates second source");
+    TEST_ASSERT(IS_QNAN(r[1]), "vminpd QNaN in second source preserves classification");
     TEST_ASSERT(r[2] == 0.0 && signbit(r[2]), "vminpd +0,-0 returns second -0");
     TEST_ASSERT(r[3] == 0.0 && !signbit(r[3]), "vminpd -0,+0 returns second +0");
 
@@ -236,7 +236,7 @@ static void test_vmaxmin_special_values(void) {
         TEST_ASSERT(isinf(rf[2]) && rf[2] > 0.0f, "vmaxps FLT_MAX versus +inf");
         TEST_ASSERT(rf[4] == FLT_MIN / 2.0f, "vmaxps positive subnormal versus zero");
         TEST_ASSERT(rf[5] == 0.0f, "vmaxps negative subnormal versus zero");
-        TEST_ASSERT(rf[6] == 1.0f && isnan(rf[7]), "vmaxps NaN source ordering");
+        TEST_ASSERT(rf[6] == 1.0f && IS_QNAN(rf[7]), "vmaxps QNaN source ordering");
     }
 }
 

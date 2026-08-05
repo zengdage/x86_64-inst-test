@@ -202,10 +202,10 @@ static void test_haddps_special(void) {
         "movaps %%xmm0, %0"
         : "=m"(r) : "m"(a) : "xmm0"
     );
-    TEST_ASSERT(isnan(r.f32[0]), "haddps inf+(-inf)=NaN [0]");
-    TEST_ASSERT(isnan(r.f32[1]), "haddps NaN+1=NaN [1]");
-    TEST_ASSERT(isnan(r.f32[2]), "haddps inf+(-inf)=NaN [2]");
-    TEST_ASSERT(isnan(r.f32[3]), "haddps NaN+1=NaN [3]");
+    TEST_ASSERT(IS_QNAN(r.f32[0]), "haddps inf+(-inf)=QNaN [0]");
+    TEST_ASSERT(IS_QNAN(r.f32[1]), "haddps QNaN+1=QNaN [1]");
+    TEST_ASSERT(IS_QNAN(r.f32[2]), "haddps inf+(-inf)=QNaN [2]");
+    TEST_ASSERT(IS_QNAN(r.f32[3]), "haddps QNaN+1=QNaN [3]");
 }
 
 static void test_haddps_zero(void) {
@@ -233,9 +233,9 @@ static void test_haddps_inf(void) {
         : "=m"(r) : "m"(a) : "xmm0"
     );
     TEST_ASSERT(isinf(r.f32[0]) && r.f32[0] > 0, "haddps inf+1=inf [0]");
-    TEST_ASSERT(isnan(r.f32[1]), "haddps inf+(-inf)=NaN [1]");
+    TEST_ASSERT(IS_QNAN(r.f32[1]), "haddps inf+(-inf)=QNaN [1]");
     TEST_ASSERT(isinf(r.f32[2]) && r.f32[2] > 0, "haddps inf+1=inf [2]");
-    TEST_ASSERT(isnan(r.f32[3]), "haddps inf+(-inf)=NaN [3]");
+    TEST_ASSERT(IS_QNAN(r.f32[3]), "haddps inf+(-inf)=QNaN [3]");
 }
 
 static void test_haddpd_special(void) {
@@ -247,8 +247,8 @@ static void test_haddpd_special(void) {
         "movapd %%xmm0, %0"
         : "=m"(r) : "m"(a) : "xmm0"
     );
-    TEST_ASSERT(isnan(r.f64[0]), "haddpd inf+(-inf)=NaN [0]");
-    TEST_ASSERT(isnan(r.f64[1]), "haddpd inf+(-inf)=NaN [1]");
+    TEST_ASSERT(IS_QNAN(r.f64[0]), "haddpd inf+(-inf)=QNaN [0]");
+    TEST_ASSERT(IS_QNAN(r.f64[1]), "haddpd inf+(-inf)=QNaN [1]");
 }
 
 static void test_haddpd_zero(void) {
@@ -287,9 +287,9 @@ static void test_hsubps_special(void) {
         : "=m"(r) : "m"(a) : "xmm0"
     );
     TEST_ASSERT(isinf(r.f32[0]) && r.f32[0] > 0, "hsubps inf-(-inf)=inf [0]");
-    TEST_ASSERT(isnan(r.f32[1]), "hsubps NaN-1=NaN [1]");
+    TEST_ASSERT(IS_QNAN(r.f32[1]), "hsubps QNaN-1=QNaN [1]");
     TEST_ASSERT(isinf(r.f32[2]) && r.f32[2] > 0, "hsubps inf-(-inf)=inf [2]");
-    TEST_ASSERT(isnan(r.f32[3]), "hsubps NaN-1=NaN [3]");
+    TEST_ASSERT(IS_QNAN(r.f32[3]), "hsubps QNaN-1=QNaN [3]");
 }
 
 static void test_hsubps_inf_nan(void) {
@@ -301,9 +301,9 @@ static void test_hsubps_inf_nan(void) {
         "movaps %%xmm0, %0"
         : "=m"(r) : "m"(a) : "xmm0"
     );
-    TEST_ASSERT(isnan(r.f32[0]), "hsubps inf-inf=NaN [0]");
+    TEST_ASSERT(IS_QNAN(r.f32[0]), "hsubps inf-inf=QNaN [0]");
     TEST_ASSERT(r.f32[1] == 0.0f, "hsubps 5-5=0 [1]");
-    TEST_ASSERT(isnan(r.f32[2]), "hsubps inf-inf=NaN [2]");
+    TEST_ASSERT(IS_QNAN(r.f32[2]), "hsubps inf-inf=QNaN [2]");
     TEST_ASSERT(r.f32[3] == 0.0f, "hsubps 5-5=0 [3]");
 }
 
@@ -344,8 +344,8 @@ static void test_hsubpd_inf_nan(void) {
         "movapd %%xmm0, %0"
         : "=m"(r) : "m"(a) : "xmm0"
     );
-    TEST_ASSERT(isnan(r.f64[0]), "hsubpd inf-inf=NaN [0]");
-    TEST_ASSERT(isnan(r.f64[1]), "hsubpd inf-inf=NaN [1]");
+    TEST_ASSERT(IS_QNAN(r.f64[0]), "hsubpd inf-inf=QNaN [0]");
+    TEST_ASSERT(IS_QNAN(r.f64[1]), "hsubpd inf-inf=QNaN [1]");
 }
 
 static void test_hsubpd_zero(void) {
@@ -374,7 +374,7 @@ static void test_addsubps_special(void) {
     );
     TEST_ASSERT(isinf(r.f32[0]) && r.f32[0] > 0, "addsubps [0] inf-1=inf");
     TEST_ASSERT(isinf(r.f32[1]) && r.f32[1] < 0, "addsubps [1] -inf+(-inf)=-inf");
-    TEST_ASSERT(isnan(r.f32[2]), "addsubps [2] NaN-1=NaN");
+    TEST_ASSERT(IS_QNAN(r.f32[2]), "addsubps [2] QNaN-1=QNaN");
     TEST_ASSERT(r.f32[3] == 0.0f, "addsubps [3] 0+0=0");
 }
 
@@ -389,9 +389,9 @@ static void test_addsubps_inf_nan(void) {
         "movaps %%xmm0, %0"
         : "=m"(r) : "m"(a), "m"(b) : "xmm0", "xmm1"
     );
-    TEST_ASSERT(isnan(r.f32[0]), "addsubps [0] inf-inf=NaN");
+    TEST_ASSERT(IS_QNAN(r.f32[0]), "addsubps [0] inf-inf=QNaN");
     TEST_ASSERT(isinf(r.f32[1]) && r.f32[1] > 0, "addsubps [1] inf+inf=inf");
-    TEST_ASSERT(isnan(r.f32[2]), "addsubps [2] inf-inf=NaN");
+    TEST_ASSERT(IS_QNAN(r.f32[2]), "addsubps [2] inf-inf=QNaN");
     TEST_ASSERT(isinf(r.f32[3]) && r.f32[3] > 0, "addsubps [3] inf+inf=inf");
 }
 
@@ -421,7 +421,7 @@ static void test_addsubpd_inf_nan(void) {
         "movapd %%xmm0, %0"
         : "=m"(r) : "m"(a), "m"(b) : "xmm0", "xmm1"
     );
-    TEST_ASSERT(isnan(r.f64[0]), "addsubpd [0] inf-inf=NaN");
+    TEST_ASSERT(IS_QNAN(r.f64[0]), "addsubpd [0] inf-inf=QNaN");
     TEST_ASSERT(isinf(r.f64[1]) && r.f64[1] > 0, "addsubpd [1] inf+inf=inf");
 }
 

@@ -83,7 +83,7 @@ static void test_fsqrt(void) {
         : "=m"(result)
         : "m"(val)
     );
-    TEST_ASSERT(isnan(result), "fsqrt(-1) = NaN");
+    TEST_ASSERT(IS_QNAN(result), "fsqrt(-1) = QNaN");
 }
 
 static void test_fabs(void) {

@@ -113,7 +113,7 @@ static void test_minss(void) {
         : "m"(a), "m"(b)
         : "xmm0", "xmm1"
     );
-    TEST_ASSERT(isnan(result.f32[0]), "minss(5,NaN)=NaN (source returned)");
+    TEST_ASSERT(IS_QNAN(result.f32[0]), "minss(5,QNaN)=QNaN (source returned)");
 
     /* +0 vs -0 */
     a.f32[0] = 0.0f;
@@ -235,7 +235,7 @@ static void test_maxss(void) {
         : "m"(a), "m"(b)
         : "xmm0", "xmm1"
     );
-    TEST_ASSERT(isnan(result.f32[0]), "maxss(5,NaN)=NaN (source returned)");
+    TEST_ASSERT(IS_QNAN(result.f32[0]), "maxss(5,QNaN)=QNaN (source returned)");
 
     /* Denormal */
     a.f32[0] = FLT_MIN / 2.0f;
@@ -296,6 +296,8 @@ static void test_minmaxss_exact_bits_upper_lanes_and_snan(void) {
                 "MINSS exact SNaN source and destination upper lanes");
     TEST_ASSERT(memcmp(&max_result, &expected, sizeof(expected)) == 0,
                 "MAXSS exact SNaN source and destination upper lanes");
+    TEST_ASSERT(IS_SNAN(min_result.f32[0]) && IS_SNAN(max_result.f32[0]),
+                "MINSS/MAXSS preserve selected SNaN classification");
     TEST_ASSERT(after_mxcsr & 1, "MINSS/MAXSS SNaN sets MXCSR invalid flag");
 
     a.u32[0] = UINT32_C(0x80000000);

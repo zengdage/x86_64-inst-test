@@ -42,7 +42,7 @@ static void test_addsd_basic(void) {
         : "m"(a), "m"(b)
         : "xmm0", "xmm1"
     );
-    TEST_ASSERT(isnan(result.f64[0]), "addsd inf+(-inf)=NaN");
+    TEST_ASSERT(IS_QNAN(result.f64[0]), "addsd inf+(-inf)=QNaN");
 
     /* NaN propagation */
     a.f64[0] = NAN;
@@ -56,7 +56,7 @@ static void test_addsd_basic(void) {
         : "m"(a), "m"(b)
         : "xmm0", "xmm1"
     );
-    TEST_ASSERT(isnan(result.f64[0]), "addsd NaN+42=NaN");
+    TEST_ASSERT(IS_QNAN(result.f64[0]), "addsd QNaN+42=QNaN");
 
     /* Zero + Zero */
     a.f64[0] = 0.0;
@@ -148,7 +148,7 @@ static void test_subsd_basic(void) {
         : "m"(a), "m"(b)
         : "xmm0", "xmm1"
     );
-    TEST_ASSERT(isnan(result.f64[0]), "subsd inf-inf=NaN");
+    TEST_ASSERT(IS_QNAN(result.f64[0]), "subsd inf-inf=QNaN");
 
     /* Negative result */
     a.f64[0] = 3.0;

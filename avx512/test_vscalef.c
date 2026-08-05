@@ -127,8 +127,8 @@ int main(void) {
         TEST_ASSERT(r.f32[0] == 0x1p127f, "vscalefps largest power-of-two finite boundary");
         TEST_ASSERT(r.f32[1] == 0.0f && signbit(r.f32[1]),
                     "vscalefps negative zero preserves sign");
-        TEST_ASSERT(isnan(r.f32[2]), "vscalefps +inf scaled by -inf is NaN");
-        TEST_ASSERT(isnan(r.f32[3]), "vscalefps NaN propagates");
+        TEST_ASSERT(IS_QNAN(r.f32[2]), "vscalefps +inf scaled by -inf is QNaN");
+        TEST_ASSERT(IS_QNAN(r.f32[3]), "vscalefps QNaN propagates");
     }
 
     {

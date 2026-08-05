@@ -100,7 +100,7 @@ static void test_roundps_special(void) {
     TEST_ASSERT(result.f32[0] == 0.0f, "roundps 0=0");
     TEST_ASSERT(result.f32[1] == 0.0f && signbit(result.f32[1]), "roundps -0=-0");
     TEST_ASSERT(isinf(result.f32[2]), "roundps inf=inf");
-    TEST_ASSERT(isnan(result.f32[3]), "roundps NaN=NaN");
+    TEST_ASSERT(IS_QNAN(result.f32[3]), "roundps QNaN=QNaN");
 }
 
 static void test_roundps_mem(void) {
@@ -198,7 +198,7 @@ static void test_roundpd_special(void) {
         : "xmm0"
     );
     TEST_ASSERT(isinf(result.f64[0]), "roundpd inf=inf");
-    TEST_ASSERT(isnan(result.f64[1]), "roundpd NaN=NaN");
+    TEST_ASSERT(IS_QNAN(result.f64[1]), "roundpd QNaN=QNaN");
 
     a.f64[0] = -0.0; a.f64[1] = 0.0;
     __asm__ volatile (
@@ -264,7 +264,8 @@ static void test_round_mxcsr_and_exceptions(void) {
         : "=m"(r) : "m"(a) : "xmm0", "xmm1");
     __asm__ volatile("stmxcsr %0" : "=m"(csr));
     __asm__ volatile("ldmxcsr %0" : : "m"(saved));
-    TEST_ASSERT(isnan(r.f32[0]) && (r.u32[0] & 0x00400000u), "roundps quiets SNaN");
+    TEST_ASSERT(IS_QNAN(r.f32[0]) && !IS_SNAN(r.f32[0]),
+                "roundps quiets SNaN to QNaN");
     TEST_ASSERT(csr & 1u, "roundps SNaN sets invalid flag");
 
     xmm_t pd = { .f64 = {1.9, -1.1} };
@@ -307,6 +308,8 @@ static void test_round_mxcsr_and_exceptions(void) {
     __asm__ volatile("stmxcsr %0" : "=m"(csr));
     TEST_ASSERT(r.u64[0] == UINT64_C(0x7ff8000000001234),
                 "roundpd quiets SNaN with exact payload");
+    TEST_ASSERT(IS_QNAN(r.f64[0]) && !IS_SNAN(r.f64[0]),
+                "roundpd SNaN result is QNaN");
     TEST_ASSERT(r.u64[1] == UINT64_C(0x8000000000000000),
                 "roundpd preserves negative zero bits");
     TEST_ASSERT(csr & 1u, "roundpd SNaN sets invalid despite imm bit3");

@@ -70,7 +70,7 @@ static void test_mulss(void) {
         : "m"(a), "m"(b)
         : "xmm0", "xmm1"
     );
-    TEST_ASSERT(isnan(result.f32[0]), "mulss inf*0=NaN");
+    TEST_ASSERT(IS_QNAN(result.f32[0]), "mulss inf*0=QNaN");
 
     /* Negative * Negative = Positive */
     a.f32[0] = -3.0f;
@@ -98,7 +98,7 @@ static void test_mulss(void) {
         : "m"(a), "m"(b)
         : "xmm0", "xmm1"
     );
-    TEST_ASSERT(isnan(result.f32[0]), "mulss NaN*5=NaN");
+    TEST_ASSERT(IS_QNAN(result.f32[0]), "mulss QNaN*5=QNaN");
 }
 
 static void test_mulss_mem(void) {
@@ -176,7 +176,7 @@ static void test_divss(void) {
         : "m"(a), "m"(b)
         : "xmm0", "xmm1"
     );
-    TEST_ASSERT(isnan(result.f32[0]), "divss 0/0=NaN");
+    TEST_ASSERT(IS_QNAN(result.f32[0]), "divss 0/0=QNaN");
 
     /* Inf / Inf = NaN */
     a.f32[0] = INFINITY;
@@ -190,7 +190,7 @@ static void test_divss(void) {
         : "m"(a), "m"(b)
         : "xmm0", "xmm1"
     );
-    TEST_ASSERT(isnan(result.f32[0]), "divss inf/inf=NaN");
+    TEST_ASSERT(IS_QNAN(result.f32[0]), "divss inf/inf=QNaN");
 
     /* Denormal / 2 */
     a.f32[0] = FLT_MIN;

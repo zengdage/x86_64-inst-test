@@ -172,6 +172,7 @@ static void test_movnt_fp_bit_patterns(void) {
         TEST_ASSERT(dst.u32[lane] == src.u32[lane],
                     "movntps exact -0/Inf/NaN/subnormal bits lane %d", lane);
     }
+    TEST_ASSERT(IS_QNAN(dst.f32[2]), "movntps preserves QNaN classification");
 
     src = (xmm_t){ .u64 = {
         UINT64_C(0xfff0000000000000), UINT64_C(0x7ff0000000000001)
@@ -184,6 +185,7 @@ static void test_movnt_fp_bit_patterns(void) {
         TEST_ASSERT(dst.u64[lane] == src.u64[lane],
                     "movntpd exact -Inf/SNaN payload bits lane %d", lane);
     }
+    TEST_ASSERT(IS_SNAN(dst.f64[1]), "movntpd preserves SNaN classification");
 }
 
 static void test_movnt_store_alignment_faults(void) {

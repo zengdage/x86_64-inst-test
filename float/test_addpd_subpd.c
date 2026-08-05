@@ -34,6 +34,8 @@
     ); \
     TEST_ASSERT(memcmp(&result, &q_expected, sizeof(result)) == 0, \
                 name " preserves qNaN sign and payload in every lane"); \
+    TEST_ASSERT(IS_QNAN(result.f64[0]) && IS_QNAN(result.f64[1]), \
+                name " qNaN results remain qNaNs"); \
     TEST_ASSERT((after_mxcsr & 1u) == 0, name " qNaN leaves MXCSR invalid clear"); \
     __asm__ volatile ( \
         "ldmxcsr %[clean]\n\tmovapd %[lhs], %%xmm0\n\t" \
@@ -45,6 +47,9 @@
     __asm__ volatile ("ldmxcsr %0" : : "m"(old_mxcsr) : "memory"); \
     TEST_ASSERT(memcmp(&result, &s_expected, sizeof(result)) == 0, \
                 name " quiets sNaN and preserves sign/payload in every lane"); \
+    TEST_ASSERT(IS_QNAN(result.f64[0]) && IS_QNAN(result.f64[1]) && \
+                !IS_SNAN(result.f64[0]) && !IS_SNAN(result.f64[1]), \
+                name " sNaN results are qNaNs"); \
     TEST_ASSERT(after_mxcsr & 1u, name " sNaN sets MXCSR invalid"); \
 } while (0)
 
@@ -81,8 +86,8 @@ static void test_addpd_special(void) {
         : "m"(a), "m"(b)
         : "xmm0", "xmm1"
     );
-    TEST_ASSERT(isnan(result.f64[0]), "addpd inf+(-inf)=NaN");
-    TEST_ASSERT(isnan(result.f64[1]), "addpd NaN+42=NaN");
+    TEST_ASSERT(IS_QNAN(result.f64[0]), "addpd inf+(-inf)=QNaN");
+    TEST_ASSERT(IS_QNAN(result.f64[1]), "addpd QNaN+42=QNaN");
 
     /* Zero */
     a.f64[0] = 0.0; a.f64[1] = -0.0;
@@ -151,7 +156,7 @@ static void test_subpd_special(void) {
         : "xmm0", "xmm1"
     );
     TEST_ASSERT(result.f64[0] == 0.0, "subpd x-x=0");
-    TEST_ASSERT(isnan(result.f64[1]), "subpd inf-inf=NaN");
+    TEST_ASSERT(IS_QNAN(result.f64[1]), "subpd inf-inf=QNaN");
 }
 
 static void test_subpd_mem(void) {

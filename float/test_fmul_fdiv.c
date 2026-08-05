@@ -88,7 +88,7 @@ static void test_fmul_mem(void) {
         : "=m"(result)
         : "m"(a), "m"(b)
     );
-    TEST_ASSERT(isnan(result), "fmul inf*0 = NaN");
+    TEST_ASSERT(IS_QNAN(result), "fmul inf*0 = QNaN");
 
     /* Inf * finite = Inf */
     a = INFINITY;
@@ -201,7 +201,7 @@ static void test_fdiv_mem(void) {
         : "=m"(result)
         : "m"(a), "m"(b)
     );
-    TEST_ASSERT(isnan(result), "fdiv 0/0 = NaN");
+    TEST_ASSERT(IS_QNAN(result), "fdiv 0/0 = QNaN");
 
     /* Inf / Inf = NaN */
     a = INFINITY;
@@ -213,7 +213,7 @@ static void test_fdiv_mem(void) {
         : "=m"(result)
         : "m"(a), "m"(b)
     );
-    TEST_ASSERT(isnan(result), "fdiv inf/inf = NaN");
+    TEST_ASSERT(IS_QNAN(result), "fdiv inf/inf = QNaN");
 
     /* Float 32-bit */
     float fa = 9.0f, fb = 3.0f, fresult;
@@ -308,7 +308,7 @@ static void test_fmul_fdiv_exception_status_and_range(void) {
         "fnclex\n\tfldl %2\n\tfmull %3\n\tfstpl %0\n\tfnstsw %1"
         : "=m"(result), "=m"(status) : "m"(zero), "m"(inf) : "memory"
     );
-    TEST_ASSERT(isnan(result), "fmul zero times infinity produces NaN");
+    TEST_ASSERT(IS_QNAN(result), "fmul zero times infinity produces QNaN");
     TEST_ASSERT(status & 1, "fmul zero times infinity sets invalid status");
 
     __asm__ volatile (
@@ -330,7 +330,7 @@ static void test_fmul_fdiv_exception_status_and_range(void) {
         "fnclex\n\tfldl %2\n\tfdivl %3\n\tfstpl %0\n\tfnstsw %1"
         : "=m"(result), "=m"(status) : "m"(zero), "m"(zero) : "memory"
     );
-    TEST_ASSERT(isnan(result), "fdiv zero by zero produces NaN");
+    TEST_ASSERT(IS_QNAN(result), "fdiv zero by zero produces QNaN");
     TEST_ASSERT(status & 1, "fdiv zero by zero sets invalid status");
 
     double max = DBL_MAX, two = 2.0;

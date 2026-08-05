@@ -81,4 +81,42 @@ typedef union {
     double   f64[4];
 } ymm_t __attribute__((aligned(32)));
 
+static inline int is_qnan_f32(float value) {
+    uint32_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    return (bits & UINT32_C(0x7fffffff)) >= UINT32_C(0x7fc00000);
+}
+
+static inline int is_snan_f32(float value) {
+    uint32_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    return (bits & UINT32_C(0x7fc00000)) == UINT32_C(0x7f800000) &&
+           (bits & UINT32_C(0x003fffff)) != 0;
+}
+
+static inline int is_qnan_f64(double value) {
+    uint64_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    return (bits & UINT64_C(0x7fffffffffffffff)) >=
+           UINT64_C(0x7ff8000000000000);
+}
+
+static inline int is_snan_f64(double value) {
+    uint64_t bits;
+    memcpy(&bits, &value, sizeof(bits));
+    return (bits & UINT64_C(0x7ff8000000000000)) ==
+               UINT64_C(0x7ff0000000000000) &&
+           (bits & UINT64_C(0x0007ffffffffffff)) != 0;
+}
+
+#define IS_QNAN(value) _Generic((value), \
+    float: is_qnan_f32, \
+    double: is_qnan_f64 \
+)(value)
+
+#define IS_SNAN(value) _Generic((value), \
+    float: is_snan_f32, \
+    double: is_snan_f64 \
+)(value)
+
 #endif

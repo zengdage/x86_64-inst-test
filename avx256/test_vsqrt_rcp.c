@@ -209,7 +209,7 @@ static void test_vsqrt_rcp_boundaries(void) {
     TEST_ASSERT(rd[0] == 0.0 && !signbit(rd[0]), "vsqrtpd +0 preserves sign");
     TEST_ASSERT(rd[1] == 0.0 && signbit(rd[1]), "vsqrtpd -0 preserves sign");
     TEST_ASSERT(isinf(rd[2]) && rd[2] > 0.0, "vsqrtpd +inf = +inf");
-    TEST_ASSERT(isnan(rd[3]), "vsqrtpd negative finite = NaN");
+    TEST_ASSERT(IS_QNAN(rd[3]), "vsqrtpd negative finite = QNaN");
 
     __asm__ volatile (
         "vrcpps %1, %%ymm0\n\t"
@@ -220,7 +220,7 @@ static void test_vsqrt_rcp_boundaries(void) {
     TEST_ASSERT(isinf(rf[1]) && rf[1] < 0.0f, "vrcpps -0 = -inf");
     TEST_ASSERT(rf[2] == 0.0f && !signbit(rf[2]), "vrcpps +inf = +0");
     TEST_ASSERT(rf[3] == 0.0f && signbit(rf[3]), "vrcpps -inf = -0");
-    TEST_ASSERT(isnan(rf[4]), "vrcpps NaN propagates NaN");
+    TEST_ASSERT(IS_QNAN(rf[4]), "vrcpps QNaN propagates QNaN");
     TEST_ASSERT(rf[5] < 0.0f, "vrcpps negative input preserves result sign");
 
     __asm__ volatile (
@@ -231,8 +231,9 @@ static void test_vsqrt_rcp_boundaries(void) {
     TEST_ASSERT(isinf(rf[0]) && rf[0] > 0.0f, "vrsqrtps +0 = +inf");
     TEST_ASSERT(isinf(rf[1]) && rf[1] < 0.0f, "vrsqrtps -0 = -inf");
     TEST_ASSERT(rf[2] == 0.0f && !signbit(rf[2]), "vrsqrtps +inf = +0");
-    TEST_ASSERT(isnan(rf[3]), "vrsqrtps -inf = NaN");
-    TEST_ASSERT(isnan(rf[4]) && isnan(rf[5]), "vrsqrtps NaN and negative finite = NaN");
+    TEST_ASSERT(IS_QNAN(rf[3]), "vrsqrtps -inf = QNaN");
+    TEST_ASSERT(IS_QNAN(rf[4]) && IS_QNAN(rf[5]),
+                "vrsqrtps QNaN and negative finite produce QNaNs");
 }
 
 int main(void) {

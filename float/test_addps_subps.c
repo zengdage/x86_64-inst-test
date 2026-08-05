@@ -48,6 +48,9 @@
     ); \
     TEST_ASSERT(memcmp(&result, &q_expected, sizeof(result)) == 0, \
                 name " preserves qNaN sign and payload in every lane"); \
+    TEST_ASSERT(IS_QNAN(result.f32[0]) && IS_QNAN(result.f32[1]) && \
+                IS_QNAN(result.f32[2]) && IS_QNAN(result.f32[3]), \
+                name " qNaN results remain qNaNs"); \
     TEST_ASSERT((after_mxcsr & 1u) == 0, name " qNaN leaves MXCSR invalid clear"); \
     __asm__ volatile ( \
         "ldmxcsr %[clean]\n\tmovaps %[lhs], %%xmm0\n\t" \
@@ -59,6 +62,11 @@
     __asm__ volatile ("ldmxcsr %0" : : "m"(old_mxcsr) : "memory"); \
     TEST_ASSERT(memcmp(&result, &s_expected, sizeof(result)) == 0, \
                 name " quiets sNaN and preserves sign/payload in every lane"); \
+    TEST_ASSERT(IS_QNAN(result.f32[0]) && IS_QNAN(result.f32[1]) && \
+                IS_QNAN(result.f32[2]) && IS_QNAN(result.f32[3]) && \
+                !IS_SNAN(result.f32[0]) && !IS_SNAN(result.f32[1]) && \
+                !IS_SNAN(result.f32[2]) && !IS_SNAN(result.f32[3]), \
+                name " sNaN results are qNaNs"); \
     TEST_ASSERT(after_mxcsr & 1u, name " sNaN sets MXCSR invalid"); \
 } while (0)
 
@@ -100,7 +108,7 @@ static void test_addps_special(void) {
     TEST_ASSERT(result.f32[0] == 0.0f, "addps 0+0=0");
     TEST_ASSERT(result.f32[1] == -30.0f, "addps -10+(-20)=-30");
     TEST_ASSERT(isinf(result.f32[2]) && result.f32[2] > 0, "addps inf+1=inf");
-    TEST_ASSERT(isnan(result.f32[3]), "addps NaN+5=NaN");
+    TEST_ASSERT(IS_QNAN(result.f32[3]), "addps QNaN+5=QNaN");
 }
 
 static void test_addps_inf_nan(void) {
@@ -117,7 +125,7 @@ static void test_addps_inf_nan(void) {
         : "m"(a), "m"(b)
         : "xmm0", "xmm1"
     );
-    TEST_ASSERT(isnan(result.f32[0]), "addps inf+(-inf)=NaN");
+    TEST_ASSERT(IS_QNAN(result.f32[0]), "addps inf+(-inf)=QNaN");
     TEST_ASSERT(isinf(result.f32[1]) && result.f32[1] < 0, "addps -inf+(-inf)=-inf");
     TEST_ASSERT(isinf(result.f32[2]) && result.f32[2] > 0, "addps inf+inf=inf");
     TEST_ASSERT(result.f32[3] == 0.0f, "addps 0+(-0)=0");
@@ -179,8 +187,8 @@ static void test_subps_special(void) {
     );
     TEST_ASSERT(result.f32[0] == 0.0f, "subps x-x=0");
     TEST_ASSERT(result.f32[1] == 10.0f, "subps 5-(-5)=10");
-    TEST_ASSERT(isnan(result.f32[2]), "subps inf-inf=NaN");
-    TEST_ASSERT(isnan(result.f32[3]), "subps NaN-1=NaN");
+    TEST_ASSERT(IS_QNAN(result.f32[2]), "subps inf-inf=QNaN");
+    TEST_ASSERT(IS_QNAN(result.f32[3]), "subps QNaN-1=QNaN");
 }
 
 static void test_subps_mem(void) {

@@ -45,7 +45,7 @@ static void test_sqrtps_special(void) {
     TEST_ASSERT(result.f32[0] == 0.0f, "sqrtps sqrt(0)=0");
     TEST_ASSERT(result.f32[1] == 1.0f, "sqrtps sqrt(1)=1");
     TEST_ASSERT(isinf(result.f32[2]) && result.f32[2] > 0, "sqrtps sqrt(inf)=inf");
-    TEST_ASSERT(isnan(result.f32[3]), "sqrtps sqrt(-1)=NaN");
+    TEST_ASSERT(IS_QNAN(result.f32[3]), "sqrtps sqrt(-1)=QNaN");
 }
 
 static void test_sqrtps_nan(void) {
@@ -60,7 +60,7 @@ static void test_sqrtps_nan(void) {
         : "m"(a)
         : "xmm0"
     );
-    TEST_ASSERT(isnan(result.f32[0]), "sqrtps sqrt(NaN)=NaN");
+    TEST_ASSERT(IS_QNAN(result.f32[0]), "sqrtps sqrt(QNaN)=QNaN");
     TEST_ASSERT(fabsf(result.f32[1] - sqrtf(2.0f)) < 1e-6f, "sqrtps sqrt(2)");
     TEST_ASSERT(result.f32[2] == 0.0f && signbit(result.f32[2]), "sqrtps sqrt(-0)=-0");
     TEST_ASSERT(fabsf(result.f32[3] - sqrtf(FLT_MAX)) < 1e30f, "sqrtps sqrt(FLT_MAX)");
@@ -164,6 +164,8 @@ static void test_sqrtps_exact_nan_bits_and_invalid(void) {
     __asm__ volatile ("ldmxcsr %0" : : "m"(old_mxcsr));
     TEST_ASSERT(memcmp(&result, &expected, sizeof(expected)) == 0,
                 "SQRTPS preserves -0/QNaN payload and quiets SNaN exactly");
+    TEST_ASSERT(IS_QNAN(result.f32[2]) && IS_QNAN(result.f32[3]) &&
+                !IS_SNAN(result.f32[3]), "SQRTPS NaN results are QNaNs");
     TEST_ASSERT(after_mxcsr & 1, "SQRTPS SNaN sets MXCSR invalid flag");
 }
 

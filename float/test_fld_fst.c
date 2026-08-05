@@ -74,7 +74,7 @@ static void test_fld_fst_float(void) {
         : "=m"(dst)
         : "m"(src)
     );
-    TEST_ASSERT(isnan(dst), "fld/fstp float NaN");
+    TEST_ASSERT(IS_QNAN(dst), "fld/fstp float QNaN");
 
     /* Denormal */
     src = FLT_MIN / 2.0f;
@@ -161,7 +161,7 @@ static void test_fld_fst_double(void) {
         : "=m"(dst)
         : "m"(src)
     );
-    TEST_ASSERT(isnan(dst), "fld/fstp double NaN");
+    TEST_ASSERT(IS_QNAN(dst), "fld/fstp double QNaN");
 
     /* Denormal */
     src = DBL_MIN / 2.0;
@@ -267,6 +267,8 @@ static void test_fld_fst_exact_extended_and_snan(void) {
     memcpy(&result_bits, &result, sizeof(result_bits));
     TEST_ASSERT(result_bits == UINT64_C(0x7ff8000000001234),
                 "fld/fstp quiets double SNaN with exact payload");
+    TEST_ASSERT(IS_QNAN(result) && !IS_SNAN(result),
+                "fld/fstp SNaN result is QNaN");
     TEST_ASSERT(status & 1, "fld/fstp SNaN sets invalid status");
     __asm__ volatile("fnclex");
 }

@@ -180,6 +180,7 @@ static void test_scalar_merge_and_upper_zeroing(void) {
         "vmovss %%xmm1, %%xmm0, %%xmm2\n\t" "vmovdqu %%ymm2, %0"
         : "=m"(result) : "m"(src1), "m"(src2) : "xmm0", "xmm1", "xmm2");
     TEST_ASSERT(result.u32[0] == src2.u32[0], "vmovss reg-reg preserves NaN payload bits");
+    TEST_ASSERT(IS_QNAN(result.f32[0]), "vmovss reg-reg preserves QNaN classification");
     for (int i = 1; i < 4; i++)
         TEST_ASSERT(result.u32[i] == src1.u32[i], "vmovss merge-source lane %d", i);
     for (int i = 4; i < 8; i++)

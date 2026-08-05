@@ -48,6 +48,9 @@
     ); \
     TEST_ASSERT(memcmp(&result, &q_expected, sizeof(result)) == 0, \
                 name " preserves qNaN sign and payload in every lane"); \
+    TEST_ASSERT(IS_QNAN(result.f32[0]) && IS_QNAN(result.f32[1]) && \
+                IS_QNAN(result.f32[2]) && IS_QNAN(result.f32[3]), \
+                name " qNaN results remain qNaNs"); \
     TEST_ASSERT((after_mxcsr & 1u) == 0, name " qNaN leaves MXCSR invalid clear"); \
     __asm__ volatile ( \
         "ldmxcsr %[clean]\n\tmovaps %[lhs], %%xmm0\n\t" \
@@ -59,6 +62,11 @@
     __asm__ volatile ("ldmxcsr %0" : : "m"(old_mxcsr) : "memory"); \
     TEST_ASSERT(memcmp(&result, &s_expected, sizeof(result)) == 0, \
                 name " quiets sNaN and preserves sign/payload in every lane"); \
+    TEST_ASSERT(IS_QNAN(result.f32[0]) && IS_QNAN(result.f32[1]) && \
+                IS_QNAN(result.f32[2]) && IS_QNAN(result.f32[3]) && \
+                !IS_SNAN(result.f32[0]) && !IS_SNAN(result.f32[1]) && \
+                !IS_SNAN(result.f32[2]) && !IS_SNAN(result.f32[3]), \
+                name " sNaN results are qNaNs"); \
     TEST_ASSERT(after_mxcsr & 1u, name " sNaN sets MXCSR invalid"); \
 } while (0)
 
@@ -97,9 +105,9 @@ static void test_mulps_special(void) {
         : "xmm0", "xmm1"
     );
     TEST_ASSERT(result.f32[0] == 0.0f, "mulps 0*42=0");
-    TEST_ASSERT(isnan(result.f32[1]), "mulps inf*0=NaN");
+    TEST_ASSERT(IS_QNAN(result.f32[1]), "mulps inf*0=QNaN");
     TEST_ASSERT(result.f32[2] == 15.0f, "mulps (-3)*(-5)=15");
-    TEST_ASSERT(isnan(result.f32[3]), "mulps NaN*1=NaN");
+    TEST_ASSERT(IS_QNAN(result.f32[3]), "mulps QNaN*1=QNaN");
 }
 
 static void test_mulps_mem(void) {
@@ -155,9 +163,9 @@ static void test_divps_special(void) {
         : "xmm0", "xmm1"
     );
     TEST_ASSERT(isinf(result.f32[0]) && result.f32[0] > 0, "divps 1/0=+inf");
-    TEST_ASSERT(isnan(result.f32[1]), "divps 0/0=NaN");
-    TEST_ASSERT(isnan(result.f32[2]), "divps inf/inf=NaN");
-    TEST_ASSERT(isnan(result.f32[3]), "divps NaN/2=NaN");
+    TEST_ASSERT(IS_QNAN(result.f32[1]), "divps 0/0=QNaN");
+    TEST_ASSERT(IS_QNAN(result.f32[2]), "divps inf/inf=QNaN");
+    TEST_ASSERT(IS_QNAN(result.f32[3]), "divps QNaN/2=QNaN");
 }
 
 static void test_divps_mem(void) {

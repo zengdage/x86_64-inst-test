@@ -76,7 +76,7 @@ static void test_fadd_mem(void) {
         : "=m"(result)
         : "m"(a), "m"(b)
     );
-    TEST_ASSERT(isnan(result), "fadd inf+(-inf) = NaN");
+    TEST_ASSERT(IS_QNAN(result), "fadd inf+(-inf) = QNaN");
 
     /* Negative numbers */
     a = -10.0;
@@ -165,7 +165,7 @@ static void test_fsub_mem(void) {
         : "=m"(result)
         : "m"(a), "m"(b)
     );
-    TEST_ASSERT(isnan(result), "fsub inf-inf = NaN");
+    TEST_ASSERT(IS_QNAN(result), "fsub inf-inf = QNaN");
 }
 
 static void test_fsubp(void) {
@@ -250,7 +250,7 @@ static void test_fadd_fsub_status_precision_and_signed_zero(void) {
         : "=m"(result), "=m"(status) : "m"(pos_inf), "m"(neg_inf)
         : "memory"
     );
-    TEST_ASSERT(isnan(result), "fadd +inf + -inf produces NaN");
+    TEST_ASSERT(IS_QNAN(result), "fadd +inf + -inf produces QNaN");
     TEST_ASSERT(status & 1, "fadd opposite infinities sets invalid status");
 
     __asm__ volatile (
@@ -258,7 +258,7 @@ static void test_fadd_fsub_status_precision_and_signed_zero(void) {
         : "=m"(result), "=m"(status) : "m"(pos_inf), "m"(pos_inf)
         : "memory"
     );
-    TEST_ASSERT(isnan(result), "fsub infinity minus itself produces NaN");
+    TEST_ASSERT(IS_QNAN(result), "fsub infinity minus itself produces QNaN");
     TEST_ASSERT(status & 1, "fsub equal infinities sets invalid status");
 
     double one = 1.0, tiny = 0x1p-65;

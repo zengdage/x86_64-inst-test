@@ -252,8 +252,8 @@ static void test_vfnmadd_special_and_fused(void) {
     volatile double rounded_product = a[0] * multiplier[0];
     TEST_ASSERT(addend[0] - rounded_product == 0.0,
         "vfnmadd discriminator requires ordinary multiply/add to cancel");
-    TEST_ASSERT(isnan(r[1]), "vfnmadd Inf * 0 is NaN");
-    TEST_ASSERT(isnan(r[2]), "vfnmadd NaN propagation");
+    TEST_ASSERT(IS_QNAN(r[1]), "vfnmadd Inf * 0 is QNaN");
+    TEST_ASSERT(IS_QNAN(r[2]), "vfnmadd QNaN propagation");
     TEST_ASSERT(isinf(r[3]) && signbit(r[3]), "vfnmadd overflow is -Inf");
 
     float fa[8] = {0.0f, FLT_MIN, INFINITY, NAN, FLT_MAX, -0.0f, 1.0f, -1.0f};
@@ -270,8 +270,8 @@ static void test_vfnmadd_special_and_fused(void) {
     );
     TEST_ASSERT(fr[0] == 0.0f && signbit(fr[0]), "vfnmadd signed zero");
     TEST_ASSERT(fr[1] == -FLT_MIN / 2.0f, "vfnmadd subnormal result");
-    TEST_ASSERT(isnan(fr[2]), "vfnmadd Inf * 0 is NaN (float)");
-    TEST_ASSERT(isnan(fr[3]), "vfnmadd NaN propagation (float)");
+    TEST_ASSERT(IS_QNAN(fr[2]), "vfnmadd Inf * 0 is QNaN (float)");
+    TEST_ASSERT(IS_QNAN(fr[3]), "vfnmadd QNaN propagation (float)");
     TEST_ASSERT(isinf(fr[4]) && signbit(fr[4]), "vfnmadd float overflow is -Inf");
 }
 

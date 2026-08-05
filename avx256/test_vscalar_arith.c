@@ -198,18 +198,18 @@ static void test_scalar_special_values(void) {
     xmm_t b = { .f32 = {-INFINITY, 1.0f, 2.0f, 3.0f} };
     xmm_t r;
     RUN_SCALAR_SS(vaddss, a, b, r);
-    TEST_ASSERT(isnan(r.f32[0]), "vaddss +Inf+-Inf is NaN");
+    TEST_ASSERT(IS_QNAN(r.f32[0]), "vaddss +Inf+-Inf is QNaN");
     TEST_ASSERT(r.f32[1] == 11.0f && r.f32[2] == 22.0f && r.f32[3] == 33.0f,
         "vaddss upper lanes copied from first source");
     b.f32[0] = INFINITY;
     RUN_SCALAR_SS(vsubss, a, b, r);
-    TEST_ASSERT(isnan(r.f32[0]), "vsubss Inf-Inf is NaN");
+    TEST_ASSERT(IS_QNAN(r.f32[0]), "vsubss Inf-Inf is QNaN");
     a.f32[0] = 0.0f; b.f32[0] = INFINITY;
     RUN_SCALAR_SS(vmulss, a, b, r);
-    TEST_ASSERT(isnan(r.f32[0]), "vmulss 0*Inf is NaN");
+    TEST_ASSERT(IS_QNAN(r.f32[0]), "vmulss 0*Inf is QNaN");
     a.f32[0] = INFINITY; b.f32[0] = INFINITY;
     RUN_SCALAR_SS(vdivss, a, b, r);
-    TEST_ASSERT(isnan(r.f32[0]), "vdivss Inf/Inf is NaN");
+    TEST_ASSERT(IS_QNAN(r.f32[0]), "vdivss Inf/Inf is QNaN");
     a.f32[0] = FLT_MAX; b.f32[0] = 2.0f;
     RUN_SCALAR_SS(vmulss, a, b, r);
     TEST_ASSERT(isinf(r.f32[0]) && !signbit(r.f32[0]), "vmulss overflow");
@@ -226,16 +226,17 @@ static void test_scalar_special_values(void) {
     a.f64[0] = INFINITY; a.f64[1] = 123.0;
     b.f64[0] = -INFINITY; b.f64[1] = 456.0;
     RUN_SCALAR_SD(vaddsd, a, b, r);
-    TEST_ASSERT(isnan(r.f64[0]) && r.f64[1] == 123.0, "vaddsd invalid and upper-lane preservation");
+    TEST_ASSERT(IS_QNAN(r.f64[0]) && r.f64[1] == 123.0,
+                "vaddsd invalid QNaN and upper-lane preservation");
     b.f64[0] = INFINITY;
     RUN_SCALAR_SD(vsubsd, a, b, r);
-    TEST_ASSERT(isnan(r.f64[0]), "vsubsd Inf-Inf is NaN");
+    TEST_ASSERT(IS_QNAN(r.f64[0]), "vsubsd Inf-Inf is QNaN");
     a.f64[0] = 0.0; b.f64[0] = INFINITY;
     RUN_SCALAR_SD(vmulsd, a, b, r);
-    TEST_ASSERT(isnan(r.f64[0]), "vmulsd 0*Inf is NaN");
+    TEST_ASSERT(IS_QNAN(r.f64[0]), "vmulsd 0*Inf is QNaN");
     a.f64[0] = INFINITY; b.f64[0] = INFINITY;
     RUN_SCALAR_SD(vdivsd, a, b, r);
-    TEST_ASSERT(isnan(r.f64[0]), "vdivsd Inf/Inf is NaN");
+    TEST_ASSERT(IS_QNAN(r.f64[0]), "vdivsd Inf/Inf is QNaN");
     a.f64[0] = DBL_MAX; b.f64[0] = 2.0;
     RUN_SCALAR_SD(vmulsd, a, b, r);
     TEST_ASSERT(isinf(r.f64[0]), "vmulsd overflow");
