@@ -10,6 +10,108 @@
 #include <float.h>
 #include <math.h>
 
+#define TEST_VPS_NANS(mnemonic, name) do { \
+    const ymm_t q_a = { .f32 = { \
+        __builtin_nanf("0x12345"), 1.0f, -__builtin_nanf("0x34567"), 1.0f, \
+        __builtin_nanf("0x56789"), 1.0f, -__builtin_nanf("0x789ab"), 1.0f \
+    } }; \
+    const ymm_t q_b = { .f32 = { \
+        1.0f, __builtin_nanf("0x23456"), 1.0f, -__builtin_nanf("0x45678"), \
+        1.0f, __builtin_nanf("0x6789a"), 1.0f, -__builtin_nanf("0x89abc") \
+    } }; \
+    const ymm_t s_a = { .f32 = { \
+        __builtin_nansf("0x12345"), 1.0f, -__builtin_nansf("0x34567"), 1.0f, \
+        __builtin_nansf("0x56789"), 1.0f, -__builtin_nansf("0x789ab"), 1.0f \
+    } }; \
+    const ymm_t s_b = { .f32 = { \
+        1.0f, __builtin_nansf("0x23456"), 1.0f, -__builtin_nansf("0x45678"), \
+        1.0f, __builtin_nansf("0x6789a"), 1.0f, -__builtin_nansf("0x89abc") \
+    } }; \
+    ymm_t q_expected = q_a, s_expected = s_a; \
+    ymm_t result; \
+    uint32_t old_mxcsr, clean_mxcsr, after_mxcsr; \
+    for (int lane = 1; lane < 8; lane += 2) { \
+        q_expected.u32[lane] = q_b.u32[lane]; \
+        s_expected.u32[lane] = s_b.u32[lane]; \
+    } \
+    for (int lane = 0; lane < 8; lane++) \
+        s_expected.u32[lane] |= UINT32_C(1) << 22; \
+    __asm__ volatile ("stmxcsr %0" : "=m"(old_mxcsr)); \
+    clean_mxcsr = (old_mxcsr | 0x80u) & ~0x3fu; \
+    __asm__ volatile ( \
+        "ldmxcsr %[clean]\n\tvmovaps %[lhs], %%ymm0\n\t" \
+        mnemonic " %[rhs], %%ymm0, %%ymm1\n\tvmovaps %%ymm1, %[result]\n\tstmxcsr %[after]" \
+        : [result] "=m"(result), [after] "=m"(after_mxcsr) \
+        : [clean] "m"(clean_mxcsr), [lhs] "m"(q_a), [rhs] "m"(q_b) \
+        : "ymm0", "ymm1", "memory" \
+    ); \
+    TEST_ASSERT(memcmp(&result, &q_expected, sizeof(result)) == 0, \
+                name " preserves qNaN sign and payload in every lane"); \
+    TEST_ASSERT((after_mxcsr & 1u) == 0, name " qNaN leaves MXCSR invalid clear"); \
+    __asm__ volatile ( \
+        "ldmxcsr %[clean]\n\tvmovaps %[lhs], %%ymm0\n\t" \
+        mnemonic " %[rhs], %%ymm0, %%ymm1\n\tvmovaps %%ymm1, %[result]\n\tstmxcsr %[after]" \
+        : [result] "=m"(result), [after] "=m"(after_mxcsr) \
+        : [clean] "m"(clean_mxcsr), [lhs] "m"(s_a), [rhs] "m"(s_b) \
+        : "ymm0", "ymm1", "memory" \
+    ); \
+    __asm__ volatile ("ldmxcsr %0" : : "m"(old_mxcsr) : "memory"); \
+    TEST_ASSERT(memcmp(&result, &s_expected, sizeof(result)) == 0, \
+                name " quiets sNaN and preserves sign/payload in every lane"); \
+    TEST_ASSERT(after_mxcsr & 1u, name " sNaN sets MXCSR invalid"); \
+} while (0)
+
+#define TEST_VPD_NANS(mnemonic, name) do { \
+    const ymm_t q_a = { .f64 = { \
+        __builtin_nan("0x123456789abc"), 1.0, \
+        -__builtin_nan("0x3456789abcde"), 1.0 \
+    } }; \
+    const ymm_t q_b = { .f64 = { \
+        1.0, __builtin_nan("0x23456789abcd"), \
+        1.0, -__builtin_nan("0x456789abcdef") \
+    } }; \
+    const ymm_t s_a = { .f64 = { \
+        __builtin_nans("0x123456789abc"), 1.0, \
+        -__builtin_nans("0x3456789abcde"), 1.0 \
+    } }; \
+    const ymm_t s_b = { .f64 = { \
+        1.0, __builtin_nans("0x23456789abcd"), \
+        1.0, -__builtin_nans("0x456789abcdef") \
+    } }; \
+    ymm_t q_expected = q_a, s_expected = s_a; \
+    ymm_t result; \
+    uint32_t old_mxcsr, clean_mxcsr, after_mxcsr; \
+    for (int lane = 1; lane < 4; lane += 2) { \
+        q_expected.u64[lane] = q_b.u64[lane]; \
+        s_expected.u64[lane] = s_b.u64[lane]; \
+    } \
+    for (int lane = 0; lane < 4; lane++) \
+        s_expected.u64[lane] |= UINT64_C(1) << 51; \
+    __asm__ volatile ("stmxcsr %0" : "=m"(old_mxcsr)); \
+    clean_mxcsr = (old_mxcsr | 0x80u) & ~0x3fu; \
+    __asm__ volatile ( \
+        "ldmxcsr %[clean]\n\tvmovapd %[lhs], %%ymm0\n\t" \
+        mnemonic " %[rhs], %%ymm0, %%ymm1\n\tvmovapd %%ymm1, %[result]\n\tstmxcsr %[after]" \
+        : [result] "=m"(result), [after] "=m"(after_mxcsr) \
+        : [clean] "m"(clean_mxcsr), [lhs] "m"(q_a), [rhs] "m"(q_b) \
+        : "ymm0", "ymm1", "memory" \
+    ); \
+    TEST_ASSERT(memcmp(&result, &q_expected, sizeof(result)) == 0, \
+                name " preserves qNaN sign and payload in every lane"); \
+    TEST_ASSERT((after_mxcsr & 1u) == 0, name " qNaN leaves MXCSR invalid clear"); \
+    __asm__ volatile ( \
+        "ldmxcsr %[clean]\n\tvmovapd %[lhs], %%ymm0\n\t" \
+        mnemonic " %[rhs], %%ymm0, %%ymm1\n\tvmovapd %%ymm1, %[result]\n\tstmxcsr %[after]" \
+        : [result] "=m"(result), [after] "=m"(after_mxcsr) \
+        : [clean] "m"(clean_mxcsr), [lhs] "m"(s_a), [rhs] "m"(s_b) \
+        : "ymm0", "ymm1", "memory" \
+    ); \
+    __asm__ volatile ("ldmxcsr %0" : : "m"(old_mxcsr) : "memory"); \
+    TEST_ASSERT(memcmp(&result, &s_expected, sizeof(result)) == 0, \
+                name " quiets sNaN and preserves sign/payload in every lane"); \
+    TEST_ASSERT(after_mxcsr & 1u, name " sNaN sets MXCSR invalid"); \
+} while (0)
+
 static void test_vmulps_256(void) {
     ymm_t a = { .f32 = {1.0f,2.0f,3.0f,4.0f,5.0f,6.0f,7.0f,8.0f} };
     ymm_t b = { .f32 = {2.0f,3.0f,4.0f,5.0f,6.0f,7.0f,8.0f,9.0f} };
@@ -169,6 +271,13 @@ static void test_mul_div_special_values(void) {
     TEST_ASSERT(dst.f64[3] == DBL_MIN / 2.0, "vdivpd subnormal result");
 }
 
+static void test_vmul_vdiv_nan_bits(void) {
+    TEST_VPS_NANS("vmulps", "VMULPS");
+    TEST_VPD_NANS("vmulpd", "VMULPD");
+    TEST_VPS_NANS("vdivps", "VDIVPS");
+    TEST_VPD_NANS("vdivpd", "VDIVPD");
+}
+
 int main(void) {
     TEST_START("VMULPS/VMULPD/VDIVPS/VDIVPD instructions (AVX 256-bit)");
     test_vmulps_256();
@@ -177,6 +286,7 @@ int main(void) {
     test_vdivpd_256();
     test_vmulps_by_zero();
     test_mul_div_special_values();
+    test_vmul_vdiv_nan_bits();
     __asm__ volatile ("vzeroupper");
     TEST_END();
 }

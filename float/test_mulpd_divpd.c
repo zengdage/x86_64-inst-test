@@ -11,6 +11,43 @@
 #include <math.h>
 #include <float.h>
 
+#define TEST_PD_NANS(mnemonic, name) do { \
+    const xmm_t q_a = { .f64 = {__builtin_nan("0x123456789abc"), 8.0} }; \
+    const xmm_t q_b = { .f64 = {1.0, -__builtin_nan("0x23456789abcd")} }; \
+    const xmm_t s_a = { .f64 = {__builtin_nans("0x123456789abc"), 8.0} }; \
+    const xmm_t s_b = { .f64 = {1.0, -__builtin_nans("0x23456789abcd")} }; \
+    xmm_t q_expected = q_a, s_expected = s_a; \
+    xmm_t result; \
+    uint32_t old_mxcsr, clean_mxcsr, after_mxcsr; \
+    q_expected.u64[1] = q_b.u64[1]; \
+    s_expected.u64[1] = s_b.u64[1]; \
+    for (int lane = 0; lane < 2; lane++) \
+        s_expected.u64[lane] |= UINT64_C(1) << 51; \
+    __asm__ volatile ("stmxcsr %0" : "=m"(old_mxcsr)); \
+    clean_mxcsr = (old_mxcsr | 0x80u) & ~0x3fu; \
+    __asm__ volatile ( \
+        "ldmxcsr %[clean]\n\tmovapd %[lhs], %%xmm0\n\t" \
+        mnemonic " %[rhs], %%xmm0\n\tmovapd %%xmm0, %[result]\n\tstmxcsr %[after]" \
+        : [result] "=m"(result), [after] "=m"(after_mxcsr) \
+        : [clean] "m"(clean_mxcsr), [lhs] "m"(q_a), [rhs] "m"(q_b) \
+        : "xmm0", "memory" \
+    ); \
+    TEST_ASSERT(memcmp(&result, &q_expected, sizeof(result)) == 0, \
+                name " preserves qNaN sign and payload in every lane"); \
+    TEST_ASSERT((after_mxcsr & 1u) == 0, name " qNaN leaves MXCSR invalid clear"); \
+    __asm__ volatile ( \
+        "ldmxcsr %[clean]\n\tmovapd %[lhs], %%xmm0\n\t" \
+        mnemonic " %[rhs], %%xmm0\n\tmovapd %%xmm0, %[result]\n\tstmxcsr %[after]" \
+        : [result] "=m"(result), [after] "=m"(after_mxcsr) \
+        : [clean] "m"(clean_mxcsr), [lhs] "m"(s_a), [rhs] "m"(s_b) \
+        : "xmm0", "memory" \
+    ); \
+    __asm__ volatile ("ldmxcsr %0" : : "m"(old_mxcsr) : "memory"); \
+    TEST_ASSERT(memcmp(&result, &s_expected, sizeof(result)) == 0, \
+                name " quiets sNaN and preserves sign/payload in every lane"); \
+    TEST_ASSERT(after_mxcsr & 1u, name " sNaN sets MXCSR invalid"); \
+} while (0)
+
 static void test_mulpd_basic(void) {
     xmm_t a, b, result;
 
@@ -149,6 +186,11 @@ static void test_divpd_mem(void) {
     TEST_ASSERT(result.f64[1] == 10.0, "divpd xmm,mem [1] 200/20=10");
 }
 
+static void test_mulpd_divpd_nan_bits(void) {
+    TEST_PD_NANS("mulpd", "MULPD");
+    TEST_PD_NANS("divpd", "DIVPD");
+}
+
 int main(void) {
     TEST_START("MULPD/DIVPD instructions");
     test_mulpd_basic();
@@ -157,5 +199,6 @@ int main(void) {
     test_divpd_basic();
     test_divpd_special();
     test_divpd_mem();
+    test_mulpd_divpd_nan_bits();
     TEST_END();
 }

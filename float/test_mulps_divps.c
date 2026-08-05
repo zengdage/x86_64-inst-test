@@ -11,6 +11,57 @@
 #include <math.h>
 #include <float.h>
 
+#define TEST_PS_NANS(mnemonic, name) do { \
+    const xmm_t q_a = { .f32 = { \
+        __builtin_nanf("0x12345"), 1.0f, \
+        -__builtin_nanf("0x34567"), 1.0f \
+    } }; \
+    const xmm_t q_b = { .f32 = { \
+        1.0f, __builtin_nanf("0x23456"), \
+        1.0f, -__builtin_nanf("0x45678") \
+    } }; \
+    const xmm_t s_a = { .f32 = { \
+        __builtin_nansf("0x12345"), 1.0f, \
+        -__builtin_nansf("0x34567"), 1.0f \
+    } }; \
+    const xmm_t s_b = { .f32 = { \
+        1.0f, __builtin_nansf("0x23456"), \
+        1.0f, -__builtin_nansf("0x45678") \
+    } }; \
+    xmm_t q_expected = q_a, s_expected = s_a; \
+    xmm_t result; \
+    uint32_t old_mxcsr, clean_mxcsr, after_mxcsr; \
+    q_expected.u32[1] = q_b.u32[1]; \
+    q_expected.u32[3] = q_b.u32[3]; \
+    s_expected.u32[1] = s_b.u32[1]; \
+    s_expected.u32[3] = s_b.u32[3]; \
+    for (int lane = 0; lane < 4; lane++) \
+        s_expected.u32[lane] |= UINT32_C(1) << 22; \
+    __asm__ volatile ("stmxcsr %0" : "=m"(old_mxcsr)); \
+    clean_mxcsr = (old_mxcsr | 0x80u) & ~0x3fu; \
+    __asm__ volatile ( \
+        "ldmxcsr %[clean]\n\tmovaps %[lhs], %%xmm0\n\t" \
+        mnemonic " %[rhs], %%xmm0\n\tmovaps %%xmm0, %[result]\n\tstmxcsr %[after]" \
+        : [result] "=m"(result), [after] "=m"(after_mxcsr) \
+        : [clean] "m"(clean_mxcsr), [lhs] "m"(q_a), [rhs] "m"(q_b) \
+        : "xmm0", "memory" \
+    ); \
+    TEST_ASSERT(memcmp(&result, &q_expected, sizeof(result)) == 0, \
+                name " preserves qNaN sign and payload in every lane"); \
+    TEST_ASSERT((after_mxcsr & 1u) == 0, name " qNaN leaves MXCSR invalid clear"); \
+    __asm__ volatile ( \
+        "ldmxcsr %[clean]\n\tmovaps %[lhs], %%xmm0\n\t" \
+        mnemonic " %[rhs], %%xmm0\n\tmovaps %%xmm0, %[result]\n\tstmxcsr %[after]" \
+        : [result] "=m"(result), [after] "=m"(after_mxcsr) \
+        : [clean] "m"(clean_mxcsr), [lhs] "m"(s_a), [rhs] "m"(s_b) \
+        : "xmm0", "memory" \
+    ); \
+    __asm__ volatile ("ldmxcsr %0" : : "m"(old_mxcsr) : "memory"); \
+    TEST_ASSERT(memcmp(&result, &s_expected, sizeof(result)) == 0, \
+                name " quiets sNaN and preserves sign/payload in every lane"); \
+    TEST_ASSERT(after_mxcsr & 1u, name " sNaN sets MXCSR invalid"); \
+} while (0)
+
 static void test_mulps_basic(void) {
     xmm_t a, b, result;
 
@@ -127,6 +178,11 @@ static void test_divps_mem(void) {
     TEST_ASSERT(result.f32[3] == 40.0f, "divps xmm,mem [3] 400/10=40");
 }
 
+static void test_mulps_divps_nan_bits(void) {
+    TEST_PS_NANS("mulps", "MULPS");
+    TEST_PS_NANS("divps", "DIVPS");
+}
+
 int main(void) {
     TEST_START("MULPS/DIVPS instructions");
     test_mulps_basic();
@@ -135,5 +191,6 @@ int main(void) {
     test_divps_basic();
     test_divps_special();
     test_divps_mem();
+    test_mulps_divps_nan_bits();
     TEST_END();
 }
