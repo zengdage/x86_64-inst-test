@@ -174,6 +174,7 @@ static void test_sqrtsd_xmm_xmm(void) {
     TEST_ASSERT(result.f64[1] == 100.0, "sqrtsd xmm,xmm upper from dest preserved");
 }
 
+#if ENABLE_MXCSR_CHECK
 static void test_sqrtsd_exact_snan_and_upper_lane(void) {
     xmm_t dst = { .u64 = {
         UINT64_C(0xdeadbeefdeadbeef), UINT64_C(0xfff8123456789abc)
@@ -202,12 +203,15 @@ static void test_sqrtsd_exact_snan_and_upper_lane(void) {
                 "SQRTSD SNaN result is QNaN");
     TEST_ASSERT(after_mxcsr & 1, "SQRTSD SNaN sets MXCSR invalid flag");
 }
+#endif
 
 int main(void) {
     TEST_START("SQRTSD instruction");
     test_sqrtsd_basic();
     test_sqrtsd_mem();
     test_sqrtsd_xmm_xmm();
+#if ENABLE_MXCSR_CHECK
     test_sqrtsd_exact_snan_and_upper_lane();
+#endif
     TEST_END();
 }

@@ -256,6 +256,7 @@ static void test_comisd(void) {
     TEST_ASSERT(!(flags & CF_FLAG), "comisd 5==5: CF=0");
 }
 
+#if ENABLE_MXCSR_CHECK
 static void test_comisd_nan_exceptions_and_cleared_flags(void) {
     xmm_t qnan = { .u64 = {UINT64_C(0x7ff8123456789abc), 0} };
     xmm_t snan = { .u64 = {UINT64_C(0x7ff0000000001234), 0} };
@@ -297,6 +298,7 @@ static void test_comisd_nan_exceptions_and_cleared_flags(void) {
 #undef RUN_COMISD_NAN
     __asm__ volatile ("ldmxcsr %0" : : "m"(old_mxcsr));
 }
+#endif
 
 int main(void) {
     TEST_START("UCOMISD/COMISD instructions");
@@ -307,6 +309,8 @@ int main(void) {
     test_ucomisd_special();
     test_ucomisd_mem();
     test_comisd();
+#if ENABLE_MXCSR_CHECK
     test_comisd_nan_exceptions_and_cleared_flags();
+#endif
     TEST_END();
 }

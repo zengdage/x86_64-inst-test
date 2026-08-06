@@ -112,6 +112,7 @@ static void test_dpps_zero(void) {
     TEST_ASSERT(dst.f32[0] == 0.0f, "dpps with zeros: expected 0.0, got %f", dst.f32[0]);
 }
 
+#if ENABLE_MXCSR_CHECK
 static void test_dpps_masked_exception_and_output_mask(void) {
     xmm_t a = { .u32 = {UINT32_C(0x3f800000), UINT32_C(0x7f800000),
                          UINT32_C(0x7f800001), UINT32_C(0xff800000)} };
@@ -139,7 +140,9 @@ static void test_dpps_masked_exception_and_output_mask(void) {
         TEST_ASSERT(dst.u32[i] == 0, "dpps destination-mask zero lane %d", i);
     __asm__ volatile ("ldmxcsr %0" : : "m"(saved_mxcsr));
 }
+#endif
 
+#if ENABLE_MXCSR_CHECK
 static void test_dppd_mask_boundaries(void) {
     xmm_t a = { .u64 = {UINT64_C(0x4000000000000000), UINT64_C(0x7ff0000000000001)} };
     xmm_t b = { .u64 = {UINT64_C(0x4008000000000000), UINT64_C(0x3ff0000000000000)} };
@@ -156,6 +159,7 @@ static void test_dppd_mask_boundaries(void) {
     TEST_ASSERT(dst.f64[0] == 6.0 && dst.f64[1] == 6.0, "dppd lane0-only multiply/store-all");
     __asm__ volatile ("ldmxcsr %0" : : "m"(saved));
 }
+#endif
 
 int main(void) {
     TEST_START("DPPD/DPPS instructions (SSE4.1)");
@@ -165,7 +169,9 @@ int main(void) {
     test_dppd_basic();
     test_dppd_selective();
     test_dpps_zero();
+#if ENABLE_MXCSR_CHECK
     test_dpps_masked_exception_and_output_mask();
     test_dppd_mask_boundaries();
+#endif
     TEST_END();
 }

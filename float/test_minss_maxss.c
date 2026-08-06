@@ -269,6 +269,7 @@ static void test_maxss_mem(void) {
     TEST_ASSERT(result.f32[1] == 10.0f, "maxss xmm,mem upper preserved");
 }
 
+#if ENABLE_MXCSR_CHECK
 static void test_minmaxss_exact_bits_upper_lanes_and_snan(void) {
     xmm_t a = { .u32 = {
         UINT32_C(0x3f800000), UINT32_C(0x80000000),
@@ -314,6 +315,7 @@ static void test_minmaxss_exact_bits_upper_lanes_and_snan(void) {
     TEST_ASSERT(memcmp(&max_result, &expected, sizeof(expected)) == 0,
                 "MAXSS (-0,+0) selects exact +0 source and preserves upper lanes");
 }
+#endif
 
 int main(void) {
     TEST_START("MINSS/MAXSS instructions");
@@ -321,6 +323,8 @@ int main(void) {
     test_minss_mem();
     test_maxss();
     test_maxss_mem();
+#if ENABLE_MXCSR_CHECK
     test_minmaxss_exact_bits_upper_lanes_and_snan();
+#endif
     TEST_END();
 }

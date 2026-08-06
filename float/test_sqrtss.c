@@ -245,6 +245,7 @@ static void test_rsqrtss(void) {
                 "rsqrtss(0.25) ~ 2.0: got %f", result.f32[0]);
 }
 
+#if ENABLE_MXCSR_CHECK
 static void test_sqrtss_exact_snan_and_upper_lanes(void) {
     xmm_t dst = { .u32 = {
         UINT32_C(0xdeadbeef), UINT32_C(0x80000000),
@@ -286,6 +287,7 @@ static void test_sqrtss_exact_snan_and_upper_lanes(void) {
     TEST_ASSERT(memcmp(&result.u32[1], &dst.u32[1], 3 * sizeof(uint32_t)) == 0,
                 "SQRTSS -0 case preserves all upper lanes");
 }
+#endif
 
 int main(void) {
     TEST_START("SQRTSS/RCPSS/RSQRTSS instructions");
@@ -293,6 +295,8 @@ int main(void) {
     test_sqrtss_mem();
     test_rcpss();
     test_rsqrtss();
+#if ENABLE_MXCSR_CHECK
     test_sqrtss_exact_snan_and_upper_lanes();
+#endif
     TEST_END();
 }

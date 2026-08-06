@@ -229,6 +229,7 @@ static void test_roundpd_mem(void) {
     TEST_ASSERT(result.f64[1] == -4.0, "roundpd mem floor [1] -3.2=-4");
 }
 
+#if ENABLE_MXCSR_CHECK
 static void test_round_mxcsr_and_exceptions(void) {
     xmm_t a = { .f32 = {1.9f, -1.1f, 2.5f, -2.5f} }, r;
     uint32_t saved, csr;
@@ -315,6 +316,7 @@ static void test_round_mxcsr_and_exceptions(void) {
     TEST_ASSERT(csr & 1u, "roundpd SNaN sets invalid despite imm bit3");
     __asm__ volatile("ldmxcsr %0" : : "m"(saved));
 }
+#endif
 
 int main(void) {
     TEST_START("ROUNDPS/ROUNDPD instructions (SSE4.1)");
@@ -330,6 +332,8 @@ int main(void) {
     test_roundpd_trunc();
     test_roundpd_special();
     test_roundpd_mem();
+#if ENABLE_MXCSR_CHECK
     test_round_mxcsr_and_exceptions();
+#endif
     TEST_END();
 }

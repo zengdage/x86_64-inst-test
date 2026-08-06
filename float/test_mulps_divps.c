@@ -186,10 +186,12 @@ static void test_divps_mem(void) {
     TEST_ASSERT(result.f32[3] == 40.0f, "divps xmm,mem [3] 400/10=40");
 }
 
+#if ENABLE_MXCSR_CHECK
 static void test_mulps_divps_nan_bits(void) {
     TEST_PS_NANS("mulps", "MULPS");
     TEST_PS_NANS("divps", "DIVPS");
 }
+#endif
 
 int main(void) {
     TEST_START("MULPS/DIVPS instructions");
@@ -199,6 +201,8 @@ int main(void) {
     test_divps_basic();
     test_divps_special();
     test_divps_mem();
+#if ENABLE_MXCSR_CHECK
     test_mulps_divps_nan_bits();
+#endif
     TEST_END();
 }

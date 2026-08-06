@@ -140,6 +140,7 @@ static void test_rsqrtps(void) {
     TEST_ASSERT(result.f32[3] == 0.0f, "rsqrtps 1/sqrt(inf)=0");
 }
 
+#if ENABLE_MXCSR_CHECK
 static void test_sqrtps_exact_nan_bits_and_invalid(void) {
     xmm_t input = { .u32 = {
         UINT32_C(0x80000000), UINT32_C(0x7f800000),
@@ -168,6 +169,7 @@ static void test_sqrtps_exact_nan_bits_and_invalid(void) {
                 !IS_SNAN(result.f32[3]), "SQRTPS NaN results are QNaNs");
     TEST_ASSERT(after_mxcsr & 1, "SQRTPS SNaN sets MXCSR invalid flag");
 }
+#endif
 
 int main(void) {
     TEST_START("SQRTPS/RCPPS/RSQRTPS instructions");
@@ -178,6 +180,8 @@ int main(void) {
     test_rcpps();
     test_rcpps_negative();
     test_rsqrtps();
+#if ENABLE_MXCSR_CHECK
     test_sqrtps_exact_nan_bits_and_invalid();
+#endif
     TEST_END();
 }

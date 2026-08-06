@@ -153,6 +153,7 @@ static void test_minps_denormal(void) {
     TEST_ASSERT(result.f32[3] == -d, "minps min(-denorm,0)=-denorm");
 }
 
+#if ENABLE_MXCSR_CHECK
 static void test_minmaxps_exact_source_selection_and_snan(void) {
     xmm_t a = { .u32 = {
         UINT32_C(0x00000000), UINT32_C(0x80000000),
@@ -191,6 +192,7 @@ static void test_minmaxps_exact_source_selection_and_snan(void) {
                 "MINPS/MAXPS preserve selected QNaN/SNaN classification");
     TEST_ASSERT(after_mxcsr & 1, "MINPS/MAXPS SNaN sets MXCSR invalid flag");
 }
+#endif
 
 int main(void) {
     TEST_START("MINPS/MAXPS instructions");
@@ -201,6 +203,8 @@ int main(void) {
     test_maxps_special();
     test_maxps_mem();
     test_minps_denormal();
+#if ENABLE_MXCSR_CHECK
     test_minmaxps_exact_source_selection_and_snan();
+#endif
     TEST_END();
 }

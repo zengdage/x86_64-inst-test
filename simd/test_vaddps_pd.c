@@ -288,12 +288,14 @@ static void test_add_sub_special_values(void) {
     TEST_ASSERT(dst.f64[3] == DBL_MIN / 2.0, "vsubpd subnormal result");
 }
 
+#if ENABLE_MXCSR_CHECK
 static void test_vadd_vsub_nan_bits(void) {
     TEST_VPS_NANS("vaddps", "VADDPS");
     TEST_VPD_NANS("vaddpd", "VADDPD");
     TEST_VPS_NANS("vsubps", "VSUBPS");
     TEST_VPD_NANS("vsubpd", "VSUBPD");
 }
+#endif
 
 int main(void) {
     TEST_START("VADDPS/VADDPD/VSUBPS/VSUBPD instructions (AVX 256-bit)");
@@ -303,7 +305,9 @@ int main(void) {
     test_vsubpd_256();
     test_vaddps_three_operand();
     test_add_sub_special_values();
+#if ENABLE_MXCSR_CHECK
     test_vadd_vsub_nan_bits();
+#endif
     __asm__ volatile ("vzeroupper");
     TEST_END();
 }

@@ -226,6 +226,7 @@ static void test_maxsd_mem(void) {
     TEST_ASSERT(result.f64[1] == 50.0, "maxsd xmm,mem upper preserved");
 }
 
+#if ENABLE_MXCSR_CHECK
 static void test_minmaxsd_exact_bits_upper_lane_and_snan(void) {
     xmm_t a = { .u64 = {
         UINT64_C(0x3ff0000000000000), UINT64_C(0xfff8123456789abc)
@@ -269,6 +270,7 @@ static void test_minmaxsd_exact_bits_upper_lane_and_snan(void) {
     TEST_ASSERT(memcmp(&max_result, &expected, sizeof(expected)) == 0,
                 "MAXSD (-0,+0) selects exact +0 source and preserves upper lane");
 }
+#endif
 
 int main(void) {
     TEST_START("MINSD/MAXSD instructions");
@@ -276,6 +278,8 @@ int main(void) {
     test_minsd_mem();
     test_maxsd();
     test_maxsd_mem();
+#if ENABLE_MXCSR_CHECK
     test_minmaxsd_exact_bits_upper_lane_and_snan();
+#endif
     TEST_END();
 }

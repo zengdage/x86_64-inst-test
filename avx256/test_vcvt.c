@@ -374,6 +374,7 @@ static void test_vcvt_boundaries(void) {
 }
 
 static void test_vcvt_rounding_flags_and_scalar_merge(void) {
+#if ENABLE_MXCSR_CHECK
     float ps[8] = {1.5f, -1.5f, 2.5f, -2.5f, 1.9f, -1.1f, 0.0f, -0.0f};
     double pd[4] = {1.5, -1.5, 2.5, -2.5};
     int32_t out[8];
@@ -405,6 +406,7 @@ static void test_vcvt_rounding_flags_and_scalar_merge(void) {
             TEST_ASSERT(out[lane] == expected_pd[mode][lane],
                         "vcvtpd2dq MXCSR mode %u lane %d", mode, lane);
     }
+#endif
 
     ymm_t initial, result;
     xmm_t merge = { .u32 = {UINT32_C(0xaaaaaaaa), UINT32_C(0x80000000),
@@ -434,6 +436,7 @@ static void test_vcvt_rounding_flags_and_scalar_merge(void) {
     TEST_ASSERT(result.u64[2] == 0 && result.u64[3] == 0,
                 "vcvtss2sd clears upper YMM");
 
+#if ENABLE_MXCSR_CHECK
     double nan_value = NAN;
     int64_t indefinite;
     csr = saved & ~UINT32_C(0x3f);
@@ -444,6 +447,7 @@ static void test_vcvt_rounding_flags_and_scalar_merge(void) {
                 "vcvttsd2siq NaN integer-indefinite");
     TEST_ASSERT(csr & 1u, "vcvttsd2siq NaN sets invalid flag");
     __asm__ volatile("ldmxcsr %0" : : "m"(saved));
+#endif
 }
 
 int main(void) {

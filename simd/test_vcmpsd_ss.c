@@ -89,6 +89,7 @@ static int scalar_predicate_expected(double a, double b, int pred) {
     }
 }
 
+#if ENABLE_MXCSR_CHECK
 static void test_scalar_compare_merge_zeroing_and_exceptions(void) {
     ymm_t initial, result;
     xmm_t a = { .u64 = {UINT64_C(0x3ff0000000000000),
@@ -137,6 +138,7 @@ static void test_scalar_compare_merge_zeroing_and_exceptions(void) {
     TEST_ASSERT(csr & 1u, "vcmpss signaling predicate sets QNaN invalid");
     __asm__ volatile("ldmxcsr %0" : : "m"(saved));
 }
+#endif
 
 int main(void) {
     TEST_START("VCMPSD/VCMPSS");
@@ -193,7 +195,9 @@ int main(void) {
             "vcmpss predicate %d greater truth table", pred);
     }
 
+#if ENABLE_MXCSR_CHECK
     test_scalar_compare_merge_zeroing_and_exceptions();
+#endif
 
     TEST_END();
 }

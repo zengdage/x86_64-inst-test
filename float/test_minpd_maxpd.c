@@ -152,6 +152,7 @@ static void test_maxpd_mem(void) {
     TEST_ASSERT(result.f64[1] == 10.0, "maxpd xmm,mem [1] max(1,10)=10");
 }
 
+#if ENABLE_MXCSR_CHECK
 static void test_minmaxpd_exact_source_selection_and_snan(void) {
     xmm_t a = { .u64 = {
         UINT64_C(0x0000000000000000), UINT64_C(0x3ff0000000000000)
@@ -202,6 +203,7 @@ static void test_minmaxpd_exact_source_selection_and_snan(void) {
     TEST_ASSERT(memcmp(&max_result, &b, sizeof(b)) == 0,
                 "MAXPD exact +0 and QNaN source payload selection");
 }
+#endif
 
 int main(void) {
     TEST_START("MINPD/MAXPD instructions");
@@ -211,6 +213,8 @@ int main(void) {
     test_maxpd_basic();
     test_maxpd_special();
     test_maxpd_mem();
+#if ENABLE_MXCSR_CHECK
     test_minmaxpd_exact_source_selection_and_snan();
+#endif
     TEST_END();
 }

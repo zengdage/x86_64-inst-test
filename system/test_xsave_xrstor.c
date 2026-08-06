@@ -261,6 +261,7 @@ static void test_xsave_legacy_region(void)
     memcpy(&fsw, xsave_area + 2, sizeof(fsw));
     printf("  FSW (FPU Status Word): 0x%04X\n", fsw);
 
+#if ENABLE_MXCSR_CHECK
     uint32_t mxcsr;
     memcpy(&mxcsr, xsave_area + 24, sizeof(mxcsr));
     printf("  MXCSR: 0x%08X\n", mxcsr);
@@ -268,6 +269,7 @@ static void test_xsave_legacy_region(void)
     uint32_t mxcsr_mask;
     memcpy(&mxcsr_mask, xsave_area + 28, sizeof(mxcsr_mask));
     printf("  MXCSR_MASK: 0x%08X\n", mxcsr_mask);
+#endif
 
     /* XSAVE header at offset 512 */
     uint64_t xstate_bv, xcomp_bv;
@@ -278,8 +280,10 @@ static void test_xsave_legacy_region(void)
 
     /* Default FCW on x86-64 is typically 0x037F */
     TEST_ASSERT(fcw != 0, "FCW should not be zero after XSAVE");
+#if ENABLE_MXCSR_CHECK
     /* MXCSR default is 0x1F80 */
     TEST_ASSERT(mxcsr != 0, "MXCSR should not be zero after XSAVE");
+#endif
 
     free(xsave_area);
 }

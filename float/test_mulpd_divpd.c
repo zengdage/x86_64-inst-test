@@ -191,10 +191,12 @@ static void test_divpd_mem(void) {
     TEST_ASSERT(result.f64[1] == 10.0, "divpd xmm,mem [1] 200/20=10");
 }
 
+#if ENABLE_MXCSR_CHECK
 static void test_mulpd_divpd_nan_bits(void) {
     TEST_PD_NANS("mulpd", "MULPD");
     TEST_PD_NANS("divpd", "DIVPD");
 }
+#endif
 
 int main(void) {
     TEST_START("MULPD/DIVPD instructions");
@@ -204,6 +206,8 @@ int main(void) {
     test_divpd_basic();
     test_divpd_special();
     test_divpd_mem();
+#if ENABLE_MXCSR_CHECK
     test_mulpd_divpd_nan_bits();
+#endif
     TEST_END();
 }

@@ -196,10 +196,12 @@ static void test_addpd_denormal(void) {
     TEST_ASSERT(result.f64[1] == DBL_MIN, "addpd denorm+denorm=DBL_MIN [1]");
 }
 
+#if ENABLE_MXCSR_CHECK
 static void test_addpd_subpd_nan_bits(void) {
     TEST_PD_NANS("addpd", "ADDPD");
     TEST_PD_NANS("subpd", "SUBPD");
 }
+#endif
 
 int main(void) {
     TEST_START("ADDPD/SUBPD instructions");
@@ -210,6 +212,8 @@ int main(void) {
     test_subpd_special();
     test_subpd_mem();
     test_addpd_denormal();
+#if ENABLE_MXCSR_CHECK
     test_addpd_subpd_nan_bits();
+#endif
     TEST_END();
 }

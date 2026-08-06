@@ -152,6 +152,7 @@ static void test_vaddsub_memory_all_lanes_flags_and_vex_clear(void) {
     TEST_ASSERT(result.u64[2] == 0 && result.u64[3] == 0,
                 "vaddsubps VEX.128 clears upper YMM");
 
+#if ENABLE_MXCSR_CHECK
     float exceptional_a[8] = {INFINITY, 1, FLT_MAX, 1, 0, 0, 0, 0};
     float exceptional_b[8] = {INFINITY, 1, -FLT_MAX, 1, 0, 0, 0, 0};
     uint32_t saved, csr;
@@ -167,8 +168,10 @@ static void test_vaddsub_memory_all_lanes_flags_and_vex_clear(void) {
     TEST_ASSERT(csr & (1u << 3), "vaddsubps overflow sets overflow flag");
     TEST_ASSERT(csr & (1u << 5), "vaddsubps overflow sets precision flag");
     __asm__ volatile("ldmxcsr %0" : : "m"(saved));
+#endif
 }
 
+#if ENABLE_MXCSR_CHECK
 static void test_vaddsub_rounding_boundaries(void) {
     ymm_t fa = { .f32 = {1,1,1,1,1,1,1,1} };
     ymm_t fb = { .f32 = {
@@ -246,6 +249,7 @@ static void test_vaddsub_rounding_boundaries(void) {
                     "vaddsubpd downward half-ULP add/sub lane %d", lane);
     }
 }
+#endif
 
 int main(void) {
     if (!check_avx()) { printf("AVX not supported\n"); return 1; }
@@ -253,6 +257,8 @@ int main(void) {
     test_vaddsubps256();
     test_vaddsub_special();
     test_vaddsub_memory_all_lanes_flags_and_vex_clear();
+#if ENABLE_MXCSR_CHECK
     test_vaddsub_rounding_boundaries();
+#endif
     TEST_END();
 }

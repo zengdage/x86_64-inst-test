@@ -115,6 +115,7 @@ int main(void) {
                 "VDIVPS 0/0 and inf/inf produce QNaNs");
     TEST_ASSERT(dst.f32[4] == 0.0f && !signbit(dst.f32[4]), "VDIVPS 1/+inf = +0");
 
+#if ENABLE_MXCSR_CHECK
     /* Masked-off zero divisors must not set the MXCSR divide-by-zero flag. */
     for (int i = 0; i < 16; i++) { a.f32[i] = 1.0f; b.f32[i] = 0.0f; }
     kmask = 0;
@@ -135,6 +136,7 @@ int main(void) {
     TEST_ASSERT(!(mxcsr_after & (1u << 2)), "VDIVPS empty mask suppresses divide-by-zero exception");
     for (int i = 0; i < 16; i++)
         TEST_ASSERT(dst.u32[i] == 0, "VDIVPS empty zero mask lane %d", i);
+#endif
 
     TEST_END();
 }

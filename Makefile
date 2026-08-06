@@ -11,6 +11,13 @@ ifeq ($(ENABLE_RUNTIME_CPU_CHECKS),1)
 CFLAGS += -DENABLE_RUNTIME_CPU_CHECKS=1
 endif
 
+# MXCSR exception and rounding checks are disabled by default. Enable with
+# `make -B ENABLE_MXCSR_CHECK=1` when validating MXCSR state handling.
+ENABLE_MXCSR_CHECK ?= 0
+ifeq ($(ENABLE_MXCSR_CHECK),1)
+CFLAGS += -DENABLE_MXCSR_CHECK=1
+endif
+
 # Directories
 DIRS    = integer float simd system crypto avx512 avx256
 

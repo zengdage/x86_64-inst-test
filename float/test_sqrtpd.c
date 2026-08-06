@@ -137,6 +137,7 @@ static void test_sqrtpd_xmm_xmm(void) {
     TEST_ASSERT(result.f64[1] == 7.0, "sqrtpd xmm,xmm [1] sqrt(49)=7");
 }
 
+#if ENABLE_MXCSR_CHECK
 static void test_sqrtpd_exact_nan_bits_and_invalid(void) {
     xmm_t input = { .u64 = {
         UINT64_C(0x7ff8123456789abc), UINT64_C(0x7ff0000000001234)
@@ -163,6 +164,7 @@ static void test_sqrtpd_exact_nan_bits_and_invalid(void) {
                 !IS_SNAN(result.f64[1]), "SQRTPD NaN results are QNaNs");
     TEST_ASSERT(after_mxcsr & 1, "SQRTPD SNaN sets MXCSR invalid flag");
 }
+#endif
 
 int main(void) {
     TEST_START("SQRTPD instruction");
@@ -172,6 +174,8 @@ int main(void) {
     test_sqrtpd_mem();
     test_sqrtpd_denormal();
     test_sqrtpd_xmm_xmm();
+#if ENABLE_MXCSR_CHECK
     test_sqrtpd_exact_nan_bits_and_invalid();
+#endif
     TEST_END();
 }

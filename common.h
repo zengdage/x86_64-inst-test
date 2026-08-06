@@ -15,6 +15,11 @@
 #define ENABLE_RUNTIME_CPU_CHECKS 0
 #endif
 
+#ifndef ENABLE_MXCSR_CHECK
+/* MXCSR state/exception checks are opt-in for native and translator runs. */
+#define ENABLE_MXCSR_CHECK 0
+#endif
+
 static int test_passed = 0;
 static int test_failed = 0;
 

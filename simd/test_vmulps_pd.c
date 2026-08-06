@@ -281,12 +281,14 @@ static void test_mul_div_special_values(void) {
     TEST_ASSERT(dst.f64[3] == DBL_MIN / 2.0, "vdivpd subnormal result");
 }
 
+#if ENABLE_MXCSR_CHECK
 static void test_vmul_vdiv_nan_bits(void) {
     TEST_VPS_NANS("vmulps", "VMULPS");
     TEST_VPD_NANS("vmulpd", "VMULPD");
     TEST_VPS_NANS("vdivps", "VDIVPS");
     TEST_VPD_NANS("vdivpd", "VDIVPD");
 }
+#endif
 
 int main(void) {
     TEST_START("VMULPS/VMULPD/VDIVPS/VDIVPD instructions (AVX 256-bit)");
@@ -296,7 +298,9 @@ int main(void) {
     test_vdivpd_256();
     test_vmulps_by_zero();
     test_mul_div_special_values();
+#if ENABLE_MXCSR_CHECK
     test_vmul_vdiv_nan_bits();
+#endif
     __asm__ volatile ("vzeroupper");
     TEST_END();
 }

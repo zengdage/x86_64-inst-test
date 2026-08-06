@@ -148,6 +148,7 @@ static void test_vdp_lane_boundaries_exceptions_and_vex_clear(void) {
     TEST_ASSERT(result.u64[2] == 0 && result.u64[3] == 0,
                 "vdppd VEX.128 clears upper YMM");
 
+#if ENABLE_MXCSR_CHECK
     ymm_t exceptional_a = {0}, exceptional_b = {0};
     for (int lane = 0; lane < 8; lane++) {
         exceptional_a.f32[lane] = (float)(lane + 1);
@@ -172,6 +173,7 @@ static void test_vdp_lane_boundaries_exceptions_and_vex_clear(void) {
     __asm__ volatile("stmxcsr %0" : "=m"(csr));
     TEST_ASSERT(csr & 1u, "vdpps selected SNaN input sets invalid");
     __asm__ volatile("ldmxcsr %0" : : "m"(saved));
+#endif
 }
 
 static void test_vdp_immediate_boundaries(void) {

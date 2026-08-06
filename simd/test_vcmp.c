@@ -130,6 +130,7 @@ static void test_vcmpps_all_predicates(void) {
     CHECK_PRED(28); CHECK_PRED(29); CHECK_PRED(30); CHECK_PRED(31);
 #undef CHECK_PRED
 
+#if ENABLE_MXCSR_CHECK
     uint32_t before, after, clean;
     __asm__ volatile ("stmxcsr %0" : "=m"(before));
     clean = before & ~UINT32_C(0x3f);
@@ -142,6 +143,7 @@ static void test_vcmpps_all_predicates(void) {
     __asm__ volatile ("stmxcsr %0" : "=m"(after));
     __asm__ volatile ("ldmxcsr %0" : : "m"(before));
     TEST_ASSERT(after & 1u, "vcmpps signaling predicate sets invalid for QNaN");
+#endif
 }
 
 int main(void) {

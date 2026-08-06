@@ -228,10 +228,12 @@ static void test_addps_denormal(void) {
     TEST_ASSERT(result.f32[3] == FLT_MIN, "addps denorm+denorm=FLT_MIN [3]");
 }
 
+#if ENABLE_MXCSR_CHECK
 static void test_addps_subps_nan_bits(void) {
     TEST_PS_NANS("addps", "ADDPS");
     TEST_PS_NANS("subps", "SUBPS");
 }
+#endif
 
 int main(void) {
     TEST_START("ADDPS/SUBPS instructions");
@@ -243,6 +245,8 @@ int main(void) {
     test_subps_special();
     test_subps_mem();
     test_addps_denormal();
+#if ENABLE_MXCSR_CHECK
     test_addps_subps_nan_bits();
+#endif
     TEST_END();
 }

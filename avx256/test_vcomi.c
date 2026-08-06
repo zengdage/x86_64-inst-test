@@ -97,6 +97,7 @@ static uint64_t do_vcomiss_mem(float a, float b) {
     return flags;
 }
 
+#if ENABLE_MXCSR_CHECK
 static void assert_vcomi_flags(uint64_t flags, int zf, int pf, int cf,
                                const char *name) {
     TEST_ASSERT(!!(flags & ZF_FLAG) == zf, "%s ZF=%d expected %d", name,
@@ -108,7 +109,9 @@ static void assert_vcomi_flags(uint64_t flags, int zf, int pf, int cf,
     TEST_ASSERT((flags & (OF_FLAG | SF_FLAG | AF_FLAG)) == 0,
                 "%s clears OF/SF/AF: flags=%#" PRIx64, name, flags);
 }
+#endif
 
+#if ENABLE_MXCSR_CHECK
 static uint64_t run_vcomi_nan_sd(uint64_t bits, int unordered,
                                  uint32_t *exception_flags) {
     xmm_t value = { .u64 = {bits, 0} };
@@ -164,6 +167,7 @@ static uint64_t run_vcomi_nan_ss(uint32_t bits, int unordered,
     *exception_flags = csr & UINT32_C(0x3f);
     return flags;
 }
+#endif
 
 static void test_vcomisd(void) {
     TEST_START("VCOMISD");
@@ -236,6 +240,7 @@ static void test_vucomiss(void) {
         "vucomiss NaN: ZF=1 CF=1 PF=1, flags=%016llx", (unsigned long long)f);
 }
 
+#if ENABLE_MXCSR_CHECK
 static void test_vcomi_nan_exceptions_and_flag_clearing(void) {
     assert_vcomi_flags(do_vcomisd(5.0, 3.0), 0, 0, 0,
                        "vcomisd finite greater");
@@ -272,6 +277,7 @@ static void test_vcomi_nan_exceptions_and_flag_clearing(void) {
     assert_vcomi_flags(flags, 1, 1, 1, "vucomiss float SNaN");
     TEST_ASSERT(exceptions & 1u, "vucomiss SNaN sets MXCSR invalid");
 }
+#endif
 
 int main(void) {
     if (!check_avx()) { printf("AVX not supported\n"); return 1; }
@@ -279,6 +285,8 @@ int main(void) {
     test_vcomiss();
     test_vucomisd();
     test_vucomiss();
+#if ENABLE_MXCSR_CHECK
     test_vcomi_nan_exceptions_and_flag_clearing();
+#endif
     TEST_END();
 }

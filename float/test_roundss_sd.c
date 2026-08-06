@@ -374,6 +374,7 @@ static void test_roundsd_mem(void) {
     TEST_ASSERT(result.f64[1] == 100.0, "roundsd mem upper preserved");
 }
 
+#if ENABLE_MXCSR_CHECK
 static void test_scalar_round_mxcsr_and_exceptions(void) {
     xmm_t src1 = { .f32 = {99.0f, 11.0f, 22.0f, 33.0f} };
     xmm_t src2 = { .f32 = {1.9f, 1.0f, 2.0f, 3.0f} };
@@ -465,6 +466,7 @@ static void test_scalar_round_mxcsr_and_exceptions(void) {
     TEST_ASSERT(csr & 1u, "roundsd SNaN sets invalid despite imm bit3");
     __asm__ volatile("ldmxcsr %0" : : "m"(saved));
 }
+#endif
 
 int main(void) {
     TEST_START("ROUNDSS/ROUNDSD instructions (SSE4.1)");
@@ -480,6 +482,8 @@ int main(void) {
     test_roundsd_trunc();
     test_roundsd_special();
     test_roundsd_mem();
+#if ENABLE_MXCSR_CHECK
     test_scalar_round_mxcsr_and_exceptions();
+#endif
     TEST_END();
 }
