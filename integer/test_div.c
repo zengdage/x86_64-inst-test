@@ -156,6 +156,23 @@ static void test_div_mem(void) {
 static void test_div_boundaries(void) {
     uint64_t quot, rem;
 
+    /* RDX bit 63 must be treated as an unsigned dividend bit. */
+    __asm__ volatile (
+        "movq $0, %%rax\n\t"
+        "movq $0x8000000000000000, %%rdx\n\t"
+        "movq $-1, %%rcx\n\t"
+        "divq %%rcx\n\t"
+        "movq %%rax, %0\n\t"
+        "movq %%rdx, %1"
+        : "=r"(quot), "=r"(rem)
+        :
+        : "rax", "rcx", "rdx", "cc"
+    );
+    TEST_ASSERT(quot == 0x8000000000000000ULL,
+                "divq high-bit dividend: expected quotient 0x8000000000000000");
+    TEST_ASSERT(rem == 0x8000000000000000ULL,
+                "divq high-bit dividend: expected remainder 0x8000000000000000");
+
     /* Largest 128-bit dividend whose quotient still fits in 64 bits. */
     __asm__ volatile (
         "movq $-1, %%rax\n\t"
@@ -227,6 +244,24 @@ static void test_div_errors(void) {
         TEST_ASSERT(0, "divq quotient overflow should generate SIGFPE");
     } else {
         TEST_ASSERT(got_sigfpe, "divq quotient overflow generated SIGFPE");
+    }
+
+    got_sigfpe = 0;
+    if (sigsetjmp(div_jmpbuf, 1) == 0) {
+        __asm__ volatile (
+            "xorq %%rax, %%rax\n\t"
+            "movq $0x8000000000000000, %%rdx\n\t"
+            "movq $0x8000000000000000, %%rcx\n\t"
+            "divq %%rcx"
+            :
+            :
+            : "rax", "rcx", "rdx", "cc"
+        );
+        TEST_ASSERT(0,
+                    "divq high-bit quotient overflow should generate SIGFPE");
+    } else {
+        TEST_ASSERT(got_sigfpe,
+                    "divq high-bit quotient overflow generated SIGFPE");
     }
 
     sigaction(SIGFPE, &old_sa, NULL);
