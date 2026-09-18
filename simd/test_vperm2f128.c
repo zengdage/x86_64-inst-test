@@ -104,6 +104,51 @@ static void test_vperm2i128_all_lane_boundaries(void) {
     for (int i = 0; i < 8; i++) TEST_ASSERT(dst.u32[i] == 0, "vperm2i128 both-zero lane %d", i);
 }
 
+static void test_vperm2i128_register_aliases(void) {
+    ymm_t a = { .u32 = {0,1,2,3,4,5,6,7} };
+    ymm_t b = { .u32 = {10,11,12,13,14,15,16,17} };
+    ymm_t dst;
+
+    /* dst=src1: low=b.low (2), high=b.high (3). */
+    __asm__ volatile (
+        "vmovdqu %1, %%ymm0\n\t" "vmovdqu %2, %%ymm1\n\t"
+        "vperm2i128 $0x32, %%ymm1, %%ymm0, %%ymm0\n\t"
+        "vmovdqu %%ymm0, %0" : "=m"(dst) : "m"(a), "m"(b) : "ymm0", "ymm1");
+    for (int i = 0; i < 8; i++) {
+        TEST_ASSERT(dst.u32[i] == b.u32[i], "vperm2i128 dst=src1 lane %d", i);
+    }
+
+    /* dst=src2: low=b.high (3), high=a.high (1). */
+    __asm__ volatile (
+        "vmovdqu %1, %%ymm0\n\t" "vmovdqu %2, %%ymm1\n\t"
+        "vperm2i128 $0x13, %%ymm1, %%ymm0, %%ymm1\n\t"
+        "vmovdqu %%ymm1, %0" : "=m"(dst) : "m"(a), "m"(b) : "ymm0", "ymm1");
+    for (int i = 0; i < 4; i++) {
+        TEST_ASSERT(dst.u32[i] == b.u32[i + 4], "vperm2i128 dst=src2 b.high lane %d", i);
+        TEST_ASSERT(dst.u32[i + 4] == a.u32[i + 4], "vperm2i128 dst=src2 a.high lane %d", i + 4);
+    }
+
+    /* src1=src2: low=a.high (1), high=a.low (0). */
+    __asm__ volatile (
+        "vmovdqu %1, %%ymm0\n\t"
+        "vperm2i128 $0x01, %%ymm0, %%ymm0, %%ymm1\n\t"
+        "vmovdqu %%ymm1, %0" : "=m"(dst) : "m"(a) : "ymm0", "ymm1");
+    for (int i = 0; i < 4; i++) {
+        TEST_ASSERT(dst.u32[i] == a.u32[i + 4], "vperm2i128 src1=src2 high lane %d", i);
+        TEST_ASSERT(dst.u32[i + 4] == a.u32[i], "vperm2i128 src1=src2 low lane %d", i + 4);
+    }
+
+    /* dst=src1=src2: swap the two lanes in place. */
+    __asm__ volatile (
+        "vmovdqu %1, %%ymm0\n\t"
+        "vperm2i128 $0x01, %%ymm0, %%ymm0, %%ymm0\n\t"
+        "vmovdqu %%ymm0, %0" : "=m"(dst) : "m"(a) : "ymm0");
+    for (int i = 0; i < 4; i++) {
+        TEST_ASSERT(dst.u32[i] == a.u32[i + 4], "vperm2i128 all-alias high lane %d", i);
+        TEST_ASSERT(dst.u32[i + 4] == a.u32[i], "vperm2i128 all-alias low lane %d", i + 4);
+    }
+}
+
 int main(void) {
     TEST_START("VPERM2F128/VPERM2I128 instructions (AVX)");
     test_vperm2f128_identity();
@@ -111,6 +156,7 @@ int main(void) {
     test_vperm2f128_zero_lane();
     test_vperm2i128_basic();
     test_vperm2i128_all_lane_boundaries();
+    test_vperm2i128_register_aliases();
     __asm__ volatile ("vzeroupper");
     TEST_END();
 }
