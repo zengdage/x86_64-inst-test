@@ -374,7 +374,6 @@ static void test_vcvt_boundaries(void) {
 }
 
 static void test_vcvt_rounding_flags_and_scalar_merge(void) {
-#if ENABLE_MXCSR_CHECK
     float ps[8] = {1.5f, -1.5f, 2.5f, -2.5f, 1.9f, -1.1f, 0.0f, -0.0f};
     double pd[4] = {1.5, -1.5, 2.5, -2.5};
     int32_t out[8];
@@ -385,6 +384,18 @@ static void test_vcvt_rounding_flags_and_scalar_merge(void) {
     const int32_t expected_pd[4][4] = {
         {2,-2,2,-2}, {1,-2,2,-3}, {2,-1,3,-2}, {1,-1,2,-2}
     };
+    /* Values are 0.75 float ULP away from +/-1.0. */
+    const double pd_to_ps[4] = {
+        0x1.0000018p+0, -0x1.0000018p+0,
+        0x1.0000018p+0, -0x1.0000018p+0
+    };
+    const float expected_pd_to_ps[4][4] = {
+        {0x1.000002p+0f, -0x1.000002p+0f, 0x1.000002p+0f, -0x1.000002p+0f},
+        {0x1p+0f, -0x1.000002p+0f, 0x1p+0f, -0x1.000002p+0f},
+        {0x1.000002p+0f, -0x1p+0f, 0x1.000002p+0f, -0x1p+0f},
+        {0x1p+0f, -0x1p+0f, 0x1p+0f, -0x1p+0f}
+    };
+    float out_pd_to_ps[4];
     uint32_t saved, csr;
     __asm__ volatile("stmxcsr %0" : "=m"(saved));
     for (uint32_t mode = 0; mode < 4; mode++) {
@@ -405,8 +416,40 @@ static void test_vcvt_rounding_flags_and_scalar_merge(void) {
         for (int lane = 0; lane < 4; lane++)
             TEST_ASSERT(out[lane] == expected_pd[mode][lane],
                         "vcvtpd2dq MXCSR mode %u lane %d", mode, lane);
+
+        csr = (saved & ~((UINT32_C(3) << 13) | UINT32_C(0x3f))) | (mode << 13);
+        __asm__ volatile("ldmxcsr %0" : : "m"(csr));
+        __asm__ volatile(
+            "vmovupd %1,%%xmm1\n\tvcvtpd2ps %%xmm1,%%xmm0\n\tvmovups %%xmm0,%0"
+            : "=m"(out_pd_to_ps[0]) : "m"(pd_to_ps[0]) : "xmm0", "xmm1");
+        for (int lane = 0; lane < 2; lane++)
+            TEST_ASSERT(out_pd_to_ps[lane] == expected_pd_to_ps[mode][lane],
+                        "vcvtpd2ps 128-bit register MXCSR mode %u lane %d", mode, lane);
+
+        __asm__ volatile("ldmxcsr %0" : : "m"(csr));
+        __asm__ volatile(
+            "vcvtpd2psx %1,%%xmm0\n\tvmovups %%xmm0,%0"
+            : "=m"(out_pd_to_ps[0]) : "m"(pd_to_ps[0]) : "xmm0");
+        for (int lane = 0; lane < 2; lane++)
+            TEST_ASSERT(out_pd_to_ps[lane] == expected_pd_to_ps[mode][lane],
+                        "vcvtpd2ps 128-bit memory MXCSR mode %u lane %d", mode, lane);
+
+        __asm__ volatile("ldmxcsr %0" : : "m"(csr));
+        __asm__ volatile(
+            "vmovupd %1,%%ymm1\n\tvcvtpd2ps %%ymm1,%%xmm0\n\tvmovups %%xmm0,%0"
+            : "=m"(out_pd_to_ps[0]) : "m"(pd_to_ps[0]) : "xmm0", "ymm1");
+        for (int lane = 0; lane < 4; lane++)
+            TEST_ASSERT(out_pd_to_ps[lane] == expected_pd_to_ps[mode][lane],
+                        "vcvtpd2ps register MXCSR mode %u lane %d", mode, lane);
+
+        __asm__ volatile("ldmxcsr %0" : : "m"(csr));
+        __asm__ volatile(
+            "vcvtpd2psy %1,%%xmm0\n\tvmovups %%xmm0,%0"
+            : "=m"(out_pd_to_ps[0]) : "m"(pd_to_ps[0]) : "xmm0");
+        for (int lane = 0; lane < 4; lane++)
+            TEST_ASSERT(out_pd_to_ps[lane] == expected_pd_to_ps[mode][lane],
+                        "vcvtpd2ps memory MXCSR mode %u lane %d", mode, lane);
     }
-#endif
 
     ymm_t initial, result;
     xmm_t merge = { .u32 = {UINT32_C(0xaaaaaaaa), UINT32_C(0x80000000),
