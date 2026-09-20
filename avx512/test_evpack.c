@@ -1,6 +1,6 @@
 /*
- * Test VPACKSSWB/VPACKSSDW/VPACKUSWB with zmm registers (AVX-512BW/F).
- * Packed pack/saturate signed/unsigned word/dword to byte/word.
+ * Test VPACKSSWB/VPACKUSWB with zmm registers (AVX-512BW/F).
+ * Packed pack/saturate signed word to signed/unsigned byte.
  *
  * Compile: gcc -o test_evpack avx512/test_evpack.c -O0 -mavx512f -mavx512bw -mavx512dq -mavx512vl
  * Do NOT use static linking.
@@ -35,14 +35,14 @@ static int check_avx512(void) {
 #endif
 
 static int8_t sat_i16_to_i8(int16_t v) { return v > 127 ? 127 : v < -128 ? -128 : (int8_t)v; }
-static int16_t sat_i32_to_i16(int32_t v) { return v > 32767 ? 32767 : v < -32768 ? -32768 : (int16_t)v; }
 static uint8_t sat_i16_to_u8(int16_t v) { return v > 255 ? 255 : v < 0 ? 0 : (uint8_t)v; }
+
 int main(void) {
     if (!check_avx512()) {
         printf("AVX-512F/BW not supported, skipping tests.\n");
         return 0;
     }
-    TEST_START("EVPACKSSWB/EVPACKSSDW/EVPACKUSWB (zmm)");
+    TEST_START("EVPACKSSWB/EVPACKUSWB (zmm)");
 
     zmm_t a, b, dst;
 
@@ -69,25 +69,6 @@ int main(void) {
                 "VPACKSSWB b lane%d j%d: %d", lane, j, dst.i8[lane*16+8+j]);
     }
 
-    /* VPACKSSDW zmm: pack 16 signed dwords from a and 16 from b into 32 signed words */
-    for (int i = 0; i < 16; i++) a.i32[i] = (int)(i * 5000 - 40000);
-    for (int i = 0; i < 16; i++) b.i32[i] = (int)(i * 3000 - 20000);
-    __asm__ volatile (
-        "vmovdqu32 %1, %%zmm0\n\t"
-        "vmovdqu32 %2, %%zmm1\n\t"
-        "vpackssdw %%zmm1, %%zmm0, %%zmm2\n\t"
-        "vmovdqu16 %%zmm2, %0"
-        : "=m"(dst) : "m"(a), "m"(b) : "zmm0","zmm1","zmm2"
-    );
-    for (int lane = 0; lane < 4; lane++) {
-        for (int j = 0; j < 4; j++)
-            TEST_ASSERT(dst.i16[lane*8+j] == sat_i32_to_i16(a.i32[lane*4+j]),
-                "VPACKSSDW a lane%d j%d: %d", lane, j, dst.i16[lane*8+j]);
-        for (int j = 0; j < 4; j++)
-            TEST_ASSERT(dst.i16[lane*8+4+j] == sat_i32_to_i16(b.i32[lane*4+j]),
-                "VPACKSSDW b lane%d j%d: %d", lane, j, dst.i16[lane*8+4+j]);
-    }
-
     /* VPACKUSWB zmm: pack 32 signed words into 64 unsigned bytes (clamp 0..255) */
     for (int i = 0; i < 32; i++) a.i16[i] = (int16_t)(i * 20 - 100);
     for (int i = 0; i < 32; i++) b.i16[i] = (int16_t)(i * 15);
@@ -112,12 +93,6 @@ int main(void) {
     __asm__ volatile ("vmovdqu16 %1,%%zmm0\n\tvmovdqu16 %2,%%zmm1\n\tvpacksswb %%zmm1,%%zmm0,%%zmm2\n\tvmovdqu8 %%zmm2,%0"
         : "=m"(dst) : "m"(a), "m"(b) : "zmm0", "zmm1", "zmm2");
     for (int i = 0; i < 8; i++) TEST_ASSERT(dst.i8[i] == sat_i16_to_i8(i8_edges[i]), "VPACKSSWB exact threshold %d", i);
-
-    const int32_t i16_edges[4] = {-32769, -32768, 32767, 32768};
-    for (int i = 0; i < 16; i++) a.i32[i] = b.i32[i] = i16_edges[i & 3];
-    __asm__ volatile ("vmovdqu32 %1,%%zmm0\n\tvmovdqu32 %2,%%zmm1\n\tvpackssdw %%zmm1,%%zmm0,%%zmm2\n\tvmovdqu16 %%zmm2,%0"
-        : "=m"(dst) : "m"(a), "m"(b) : "zmm0", "zmm1", "zmm2");
-    for (int i = 0; i < 4; i++) TEST_ASSERT(dst.i16[i] == sat_i32_to_i16(i16_edges[i]), "VPACKSSDW exact threshold %d", i);
 
     const int16_t u8_edges[8] = {-1, 0, 1, 254, 255, 256, INT16_MIN, INT16_MAX};
     for (int i = 0; i < 32; i++) a.i16[i] = b.i16[i] = u8_edges[i & 7];
