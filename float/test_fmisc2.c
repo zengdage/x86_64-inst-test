@@ -2,7 +2,7 @@
 #include <math.h>
 
 int main(void) {
-    TEST_START("x87 misc2: FCLEX/FNCLEX/FICOM/FICOMP/FSINCOS/FUCOM/FWAIT/FYL2XP1/FLDENV/FRSTOR/FSTSW AX");
+    TEST_START("x87 misc2: FCLEX/FNCLEX/FICOM/FICOMP/FSINCOS/FUCOM/FWAIT/FYL2XP1/FLDENV/FNSAVE/FRSTOR/FSTSW AX");
 
     /* FNCLEX: clear FPU exceptions without checking for pending unmasked exceptions */
     {
@@ -276,18 +276,84 @@ int main(void) {
         memset(state, 0, sizeof(state));
         double val = 2.5, result = 0.0;
         __asm__ volatile(
-            "fldl %1\n\t"
-            "fnsave %0\n\t"     /* saves state and reinitializes FPU */
-            "frstor %0\n\t"     /* restores state; ST(0) = 2.5 again */
-            "fstpl %2"
-            : "=m"(state)
-            : "m"(val), "m"(result));
-        /* read result back */
-        __asm__ volatile("" : "=m"(result));
-        double r;
-        memcpy(&r, &result, sizeof(r));
+            "fldl %[val]\n\t"
+            "fnsave %[state]\n\t"     /* saves state and reinitializes FPU */
+            "frstor %[state]\n\t"     /* restores state; ST(0) = 2.5 again */
+            "fstpl %[result]"
+            : [state] "+m"(state), [result] "=m"(result)
+            : [val] "m"(val));
         /* fnsave pops the stack, frstor restores it */
-        TEST_ASSERT(fabs(r - 2.5) < 1e-12, "fnsave/frstor: result=%g", r);
+        TEST_ASSERT(fabs(result - 2.5) < 1e-12, "fnsave/frstor: result=%g", result);
+    }
+
+    /* FNSAVE / FRSTOR must preserve all 80 bits, not round through double. */
+    {
+        const uint8_t original[10] __attribute__((aligned(2))) = {
+            0x01, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x80, 0xff, 0x3f
+        }; /* 1.0 + 2^-63 */
+        uint8_t restored[10] __attribute__((aligned(2))) = {0};
+        uint8_t state[108] __attribute__((aligned(4))) = {0};
+        __asm__ volatile(
+            "fldt %[original]\n\t"
+            "fnsave %[state]\n\t"
+            "frstor %[state]\n\t"
+            "fstpt %[restored]"
+            : [state] "+m"(state), [restored] "=m"(restored)
+            : [original] "m"(original));
+        TEST_ASSERT(memcmp(original, restored, sizeof(original)) == 0,
+                    "fnsave/frstor preserves exact 80-bit value");
+    }
+
+    /* FRSTOR must restore stack depth, tags and all stacked values. */
+    {
+        uint8_t state[108] __attribute__((aligned(4))) = {0};
+        double bottom = 1.25, middle = -2.5, top = 3.75;
+        double out_top = 0.0, out_middle = 0.0, out_bottom = 0.0;
+        uint16_t sw = 0;
+        __asm__ volatile(
+            "fldl %[bottom]\n\t"
+            "fldl %[middle]\n\t"
+            "fldl %[top]\n\t"
+            "fnsave %[state]\n\t"
+            "frstor %[state]\n\t"
+            "fxam\n\t"
+            "fnstsw %%ax\n\t"
+            "movw %%ax, %[sw]\n\t"
+            "fstpl %[out_top]\n\t"
+            "fstpl %[out_middle]\n\t"
+            "fstpl %[out_bottom]"
+            : [state] "+m"(state), [sw] "=m"(sw),
+              [out_top] "=m"(out_top), [out_middle] "=m"(out_middle),
+              [out_bottom] "=m"(out_bottom)
+            : [bottom] "m"(bottom), [middle] "m"(middle), [top] "m"(top)
+            : "ax");
+        TEST_ASSERT((sw & 0x4500) == 0x0400,
+                    "frstor restores non-empty ST0 for fxam: sw=0x%x", sw);
+        TEST_ASSERT(out_top == top && out_middle == middle && out_bottom == bottom,
+                    "frstor restores multiple x87 stack values: %g %g %g",
+                    out_top, out_middle, out_bottom);
+    }
+
+    /* Operand-size override selects the 94-byte, 16-bit environment format. */
+    {
+        const uint8_t original[10] __attribute__((aligned(2))) = {
+            0x01, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x80, 0x00, 0x40
+        }; /* 2.0 + 2^-62 */
+        uint8_t restored[10] __attribute__((aligned(2))) = {0};
+        uint8_t state[94] __attribute__((aligned(2))) = {0};
+        __asm__ volatile(
+            "fldt %[original]\n\t"
+            ".byte 0x66\n\t"
+            "fnsave %[state]\n\t"
+            ".byte 0x66\n\t"
+            "frstor %[state]\n\t"
+            "fstpt %[restored]"
+            : [state] "+m"(state), [restored] "=m"(restored)
+            : [original] "m"(original));
+        TEST_ASSERT(memcmp(original, restored, sizeof(original)) == 0,
+                    "16-bit fnsave/frstor preserves exact 80-bit value");
     }
 
     TEST_END();
