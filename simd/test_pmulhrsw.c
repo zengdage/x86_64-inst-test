@@ -90,11 +90,55 @@ static void test_pmulhrsw_rounding_boundaries(void) {
                 "pmulhrsw INT16_MIN*INT16_MIN wraps to 0x8000");
 }
 
+/*
+ * Extreme-magnitude products that stress the 32-bit intermediate:
+ *   INT16_MIN * INT16_MIN = 0x40000000  (largest positive product)
+ *   INT16_MAX * INT16_MAX = 0x3FFF0001
+ *   INT16_MIN * INT16_MAX = -1073709056 (largest negative product)
+ * Each combination is tested in both dst/src operand orders.
+ */
+static void test_pmulhrsw_extreme_products(void) {
+    xmm_t a = { .i16 = {INT16_MIN, INT16_MAX, INT16_MIN, INT16_MAX,
+                        INT16_MIN, INT16_MAX, INT16_MIN, INT16_MAX} };
+    xmm_t b = { .i16 = {INT16_MIN, INT16_MAX, INT16_MAX, INT16_MIN,
+                        INT16_MIN, INT16_MAX, INT16_MAX, INT16_MIN} };
+    xmm_t dst;
+
+    __asm__ volatile (
+        "movdqa %1, %%xmm0\n\t"
+        "pmulhrsw %2, %%xmm0\n\t"
+        "movdqa %%xmm0, %0"
+        : "=m"(dst) : "m"(a), "m"(b) : "xmm0"
+    );
+    /* (-32768)*(-32768) = 0x40000000; (0x40000000 + 0x4000) >> 15 = 0x8000,
+     * which truncates to INT16_MIN when stored as int16_t */
+    TEST_ASSERT(dst.i16[0] == INT16_MIN && dst.u16[0] == UINT16_C(0x8000),
+                "pmulhrsw INT16_MIN*INT16_MIN: got %d", dst.i16[0]);
+    /* 32767*32767 = 0x3FFF0001; (0x3FFF0001 + 0x4000) >> 15 = 32766 */
+    TEST_ASSERT(dst.i16[1] == 32766,
+                "pmulhrsw INT16_MAX*INT16_MAX: got %d", dst.i16[1]);
+    /* (-32768)*32767 = -1073709056; (-1073709056 + 0x4000) >> 15 = -32767
+     * (arithmetic shift rounds toward negative infinity) */
+    TEST_ASSERT(dst.i16[2] == -32767,
+                "pmulhrsw INT16_MIN*INT16_MAX: got %d", dst.i16[2]);
+    /* 32767*(-32768): same product with swapped operand roles */
+    TEST_ASSERT(dst.i16[3] == -32767,
+                "pmulhrsw INT16_MAX*INT16_MIN: got %d", dst.i16[3]);
+    /* Lanes 4-7 repeat the combinations; all lanes must agree */
+    static const int16_t expect[4] = {INT16_MIN, 32766, -32767, -32767};
+    for (int i = 4; i < 8; i++) {
+        TEST_ASSERT(dst.i16[i] == expect[i - 4],
+                    "pmulhrsw extreme lane %d: %d != %d",
+                    i, dst.i16[i], expect[i - 4]);
+    }
+}
+
 int main(void) {
     TEST_START("PMULHRSW instruction (SSSE3)");
     test_pmulhrsw_basic();
     test_pmulhrsw_identity();
     test_pmulhrsw_zero();
     test_pmulhrsw_rounding_boundaries();
+    test_pmulhrsw_extreme_products();
     TEST_END();
 }
