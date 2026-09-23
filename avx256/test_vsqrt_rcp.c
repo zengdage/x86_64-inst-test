@@ -152,9 +152,12 @@ static void test_vrcpss(void) {
 }
 
 static void test_vrsqrtps(void) {
-    TEST_START("VRSQRTPS (256-bit approx reciprocal sqrt)");
+    TEST_START("VRSQRTPS (128/256-bit approx reciprocal sqrt)");
     float a[8] = {4,4,4,4,16,16,16,16};
     float r[8];
+    float neg_zero[8] = {-0.0f, -0.0f, -0.0f, -0.0f,
+                         -0.0f, -0.0f, -0.0f, -0.0f};
+    float neg_zero_r[8];
     __asm__ volatile(
         "vmovups %1, %%ymm0\n\t"
         "vrsqrtps %%ymm0, %%ymm1\n\t"
@@ -172,11 +175,34 @@ static void test_vrsqrtps(void) {
         : "=m"(r2[0]) : "m"(a[0]) : "ymm1"
     );
     TEST_ASSERT(fabsf(r2[0] - 0.5f) < 0.001f, "vrsqrtps mem r[0]=%f", r2[0]);
+
+    __asm__ volatile(
+        "vmovups %1, %%xmm0\n\t"
+        "vrsqrtps %%xmm0, %%xmm1\n\t"
+        "vmovups %%xmm1, %0\n\t"
+        : "=m"(neg_zero_r[0]) : "m"(neg_zero[0]) : "xmm0", "xmm1"
+    );
+    for (int i = 0; i < 4; i++) {
+        TEST_ASSERT(isinf(neg_zero_r[i]) && signbit(neg_zero_r[i]),
+                    "vrsqrtps xmm -0 lane %d = -inf", i);
+    }
+
+    __asm__ volatile(
+        "vmovups %1, %%ymm0\n\t"
+        "vrsqrtps %%ymm0, %%ymm1\n\t"
+        "vmovups %%ymm1, %0\n\t"
+        : "=m"(neg_zero_r[0]) : "m"(neg_zero[0]) : "ymm0", "ymm1"
+    );
+    for (int i = 0; i < 8; i++) {
+        TEST_ASSERT(isinf(neg_zero_r[i]) && signbit(neg_zero_r[i]),
+                    "vrsqrtps ymm -0 lane %d = -inf", i);
+    }
 }
 
 static void test_vrsqrtss(void) {
     TEST_START("VRSQRTSS (scalar float approx reciprocal sqrt)");
     float a = 4.0f, r;
+    float neg_zero = -0.0f;
     __asm__ volatile(
         "vmovss %1, %%xmm0\n\t"
         "vrsqrtss %%xmm0, %%xmm0, %%xmm1\n\t"
@@ -192,6 +218,14 @@ static void test_vrsqrtss(void) {
         : "=m"(r) : "m"(a) : "xmm0","xmm1"
     );
     TEST_ASSERT(fabsf(r - 0.5f) < 0.001f, "vrsqrtss mem r=%f", r);
+
+    __asm__ volatile(
+        "vmovss %1, %%xmm0\n\t"
+        "vrsqrtss %%xmm0, %%xmm0, %%xmm1\n\t"
+        "vmovss %%xmm1, %0\n\t"
+        : "=m"(r) : "m"(neg_zero) : "xmm0", "xmm1"
+    );
+    TEST_ASSERT(isinf(r) && signbit(r), "vrsqrtss -0 = -inf");
 }
 
 static void test_vsqrt_rcp_boundaries(void) {
