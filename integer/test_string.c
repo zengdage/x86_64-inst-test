@@ -12,7 +12,9 @@
  * Compile: gcc -o test_string integer/test_string.c -O0
  * Note: Do not use static linking.
  */
+#define _GNU_SOURCE
 #include "../common.h"
+#include <sys/mman.h>
 
 static void test_movsb(void) {
     char src[] = "Hello, World!";
@@ -371,6 +373,126 @@ static void test_zero_count_rep(void) {
     TEST_ASSERT(flags & ZF_FLAG, "repe cmpsb RCX=0: ZF preserved");
 }
 
+static void test_addr32_rep_count(void) {
+    const size_t mapping_size = 4096;
+    uint8_t *mapping = mmap(NULL, mapping_size, PROT_READ | PROT_WRITE,
+                            MAP_PRIVATE | MAP_ANONYMOUS | MAP_32BIT, -1, 0);
+    TEST_ASSERT(mapping != MAP_FAILED, "addr32 REP: allocate memory below 2GB");
+    if (mapping == MAP_FAILED) return;
+
+    const uintptr_t base = (uintptr_t)mapping;
+    TEST_ASSERT(base + mapping_size <= UINT32_MAX,
+                "addr32 REP: mapping must fit in 32-bit address space");
+    if (base + mapping_size > UINT32_MAX) {
+        munmap(mapping, mapping_size);
+        return;
+    }
+
+    /* ECX is zero, so no memory is accessed, but addr32 still zero-extends the
+     * selected ECX/ESI/EDI register state. */
+    const uint64_t zero_count = UINT64_C(0x1234567800000000);
+    const uint64_t invalid_src = UINT64_C(0x1111222200001000);
+    const uint64_t invalid_dst = UINT64_C(0x3333444400002000);
+    uint64_t rcx_after, rsi_after, rdi_after;
+    __asm__ volatile (
+        "movq %[count], %%rcx\n\t"
+        "movq %[src], %%rsi\n\t"
+        "movq %[dst], %%rdi\n\t"
+        "cld\n\t"
+        "addr32 rep movsb\n\t"
+        "movq %%rcx, %[rcx]\n\t"
+        "movq %%rsi, %[rsi]\n\t"
+        "movq %%rdi, %[rdi]"
+        : [rcx] "=&r"(rcx_after), [rsi] "=&r"(rsi_after), [rdi] "=&r"(rdi_after)
+        : [count] "r"(zero_count), [src] "r"(invalid_src), [dst] "r"(invalid_dst)
+        : "rcx", "rsi", "rdi", "cc", "memory"
+    );
+    TEST_ASSERT(rcx_after == 0,
+                "addr32 rep movsb ECX=0 zero-extends RCX: got %#" PRIx64, rcx_after);
+    TEST_ASSERT(rsi_after == (uint32_t)invalid_src && rdi_after == (uint32_t)invalid_dst,
+                "addr32 rep movsb ECX=0 zero-extends ESI/EDI");
+
+    /* A nonzero ECX selects the low 32-bit counter and writes back zero-extended state. */
+    mapping[0] = 0x3c;
+    mapping[16] = 0xa5;
+    const uint64_t one_count = UINT64_C(0x89abcdef00000001);
+    const uint64_t src = base;
+    const uint64_t dst = base + 16;
+    __asm__ volatile (
+        "movq %[count], %%rcx\n\t"
+        "movq %[src], %%rsi\n\t"
+        "movq %[dst], %%rdi\n\t"
+        "cld\n\t"
+        "addr32 rep movsb\n\t"
+        "movq %%rcx, %[rcx]\n\t"
+        "movq %%rsi, %[rsi]\n\t"
+        "movq %%rdi, %[rdi]"
+        : [rcx] "=&r"(rcx_after), [rsi] "=&r"(rsi_after), [rdi] "=&r"(rdi_after)
+        : [count] "r"(one_count), [src] "r"(src), [dst] "r"(dst)
+        : "rcx", "rsi", "rdi", "cc", "memory"
+    );
+    TEST_ASSERT(mapping[16] == 0x3c, "addr32 rep movsb copies one byte");
+    TEST_ASSERT(rcx_after == 0, "addr32 rep movsb writes back ECX=0: got %#" PRIx64,
+                rcx_after);
+    TEST_ASSERT(rsi_after == src + 1 && rdi_after == dst + 1,
+                "addr32 rep movsb advances zero-extended ESI/EDI");
+
+    mapping[32] = 0;
+    __asm__ volatile (
+        "movq %[count], %%rcx\n\t"
+        "movq %[dst], %%rdi\n\t"
+        "movb $0x5a, %%al\n\t"
+        "cld\n\t"
+        "addr32 rep stosb\n\t"
+        "movq %%rcx, %[rcx]\n\t"
+        "movq %%rdi, %[rdi]"
+        : [rcx] "=&r"(rcx_after), [rdi] "=&r"(rdi_after)
+        : [count] "r"(one_count), [dst] "r"(base + 32)
+        : "rax", "rcx", "rdi", "cc", "memory"
+    );
+    TEST_ASSERT(mapping[32] == 0x5a && rcx_after == 0 && rdi_after == base + 33,
+                "addr32 rep stosb uses ECX/EDI and stores one byte");
+
+    mapping[64] = 0x11;
+    mapping[80] = 0x22;
+    uint64_t flags;
+    const uint64_t two_count = UINT64_C(0xfedcba9800000002);
+    __asm__ volatile (
+        "movq %[count], %%rcx\n\t"
+        "movq %[src], %%rsi\n\t"
+        "movq %[dst], %%rdi\n\t"
+        "cld\n\t"
+        "addr32 repe cmpsb\n\t"
+        "pushfq\n\t"
+        "popq %[flags]\n\t"
+        "movq %%rcx, %[rcx]"
+        : [rcx] "=&r"(rcx_after), [flags] "=&r"(flags)
+        : [count] "r"(two_count), [src] "r"(base + 64), [dst] "r"(base + 80)
+        : "rcx", "rsi", "rdi", "cc", "memory"
+    );
+    TEST_ASSERT(rcx_after == 1 && !(flags & ZF_FLAG),
+                "addr32 repe cmpsb stops after mismatch with ECX=1");
+
+    mapping[96] = 0x7e;
+    __asm__ volatile (
+        "movq %[count], %%rcx\n\t"
+        "movq %[dst], %%rdi\n\t"
+        "movb $0x7e, %%al\n\t"
+        "cld\n\t"
+        "addr32 repne scasb\n\t"
+        "pushfq\n\t"
+        "popq %[flags]\n\t"
+        "movq %%rcx, %[rcx]"
+        : [rcx] "=&r"(rcx_after), [flags] "=&r"(flags)
+        : [count] "r"(two_count), [dst] "r"(base + 96)
+        : "rax", "rcx", "rdi", "cc", "memory"
+    );
+    TEST_ASSERT(rcx_after == 1 && (flags & ZF_FLAG),
+                "addr32 repne scasb stops after match with ECX=1");
+
+    munmap(mapping, mapping_size);
+}
+
 int main(void) {
     TEST_START("String instructions");
     test_movsb();
@@ -390,5 +512,6 @@ int main(void) {
     test_scasb();
     test_direction_flag();
     test_zero_count_rep();
+    test_addr32_rep_count();
     TEST_END();
 }

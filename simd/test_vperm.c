@@ -61,6 +61,22 @@ static void test_vpermq_broadcast(void) {
     }
 }
 
+static void test_vpermq_alias(void) {
+    ymm_t value = { .i64 = {11, 22, 33, 44} };
+
+    /* The source and destination are the same register. */
+    __asm__ volatile (
+        "vmovdqa %0, %%ymm0\n\t"
+        "vpermq $0xE1, %%ymm0, %%ymm0\n\t"
+        "vmovdqa %%ymm0, %0"
+        : "+m"(value) :: "ymm0"
+    );
+    TEST_ASSERT(value.i64[0] == 22, "vpermq alias [0]: got %ld", value.i64[0]);
+    TEST_ASSERT(value.i64[1] == 11, "vpermq alias [1]: got %ld", value.i64[1]);
+    TEST_ASSERT(value.i64[2] == 33, "vpermq alias [2]: got %ld", value.i64[2]);
+    TEST_ASSERT(value.i64[3] == 44, "vpermq alias [3]: got %ld", value.i64[3]);
+}
+
 static void test_vpermpd(void) {
     ymm_t src = { .f64 = {1.0, 2.0, 3.0, 4.0} };
     ymm_t dst;
@@ -76,6 +92,22 @@ static void test_vpermpd(void) {
     TEST_ASSERT(dst.f64[1] == 3.0, "vpermpd reverse [1]: got %f", dst.f64[1]);
     TEST_ASSERT(dst.f64[2] == 2.0, "vpermpd reverse [2]: got %f", dst.f64[2]);
     TEST_ASSERT(dst.f64[3] == 1.0, "vpermpd reverse [3]: got %f", dst.f64[3]);
+}
+
+static void test_vpermpd_alias(void) {
+    ymm_t value = { .f64 = {1.0, 2.0, 3.0, 4.0} };
+
+    /* The source and destination are the same register. */
+    __asm__ volatile (
+        "vmovapd %0, %%ymm0\n\t"
+        "vpermpd $0xE1, %%ymm0, %%ymm0\n\t"
+        "vmovapd %%ymm0, %0"
+        : "+m"(value) :: "ymm0"
+    );
+    TEST_ASSERT(value.f64[0] == 2.0, "vpermpd alias [0]: got %f", value.f64[0]);
+    TEST_ASSERT(value.f64[1] == 1.0, "vpermpd alias [1]: got %f", value.f64[1]);
+    TEST_ASSERT(value.f64[2] == 3.0, "vpermpd alias [2]: got %f", value.f64[2]);
+    TEST_ASSERT(value.f64[3] == 4.0, "vpermpd alias [3]: got %f", value.f64[3]);
 }
 
 static void test_vpermd(void) {
@@ -116,7 +148,9 @@ int main(void) {
     test_vpermq_identity();
     test_vpermq_reverse();
     test_vpermq_broadcast();
+    test_vpermq_alias();
     test_vpermpd();
+    test_vpermpd_alias();
     test_vpermd();
     test_vpermps();
     __asm__ volatile ("vzeroupper");
