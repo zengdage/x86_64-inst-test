@@ -7,9 +7,80 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <setjmp.h>
+#include <signal.h>
 #include <sys/mman.h>
 #include <unistd.h>
 #include "../common.h"
+
+static sigjmp_buf maskmov_fault_env;
+static volatile sig_atomic_t maskmov_faulted;
+
+typedef struct {
+    void *address;
+    int32_t dmask[8];
+    int32_t dsrc[8];
+    int32_t ddst[8];
+    int64_t qmask[4];
+    int64_t qsrc[4];
+    int64_t qdst[4];
+} maskmov_fault_context_t;
+
+static void maskmov_fault_handler(int sig) {
+    (void)sig;
+    maskmov_faulted = 1;
+    siglongjmp(maskmov_fault_env, 1);
+}
+
+static int run_without_maskmov_fault(void (*test)(void *), void *context) {
+    maskmov_faulted = 0;
+    if (sigsetjmp(maskmov_fault_env, 1) == 0) test(context);
+    return !maskmov_faulted;
+}
+
+static void guarded_vpmaskmovd_load(void *opaque) {
+    maskmov_fault_context_t *ctx = opaque;
+    __asm__ volatile(
+        "vmovdqu %2, %%ymm0\n\t"
+        "vpmaskmovd %1, %%ymm0, %%ymm1\n\t"
+        "vmovdqu %%ymm1, %0"
+        : "=m"(ctx->ddst)
+        : "m"(*(const char (*)[32])ctx->address), "m"(ctx->dmask)
+        : "ymm0", "ymm1");
+}
+
+static void guarded_vpmaskmovd_store(void *opaque) {
+    maskmov_fault_context_t *ctx = opaque;
+    __asm__ volatile(
+        "vmovdqu %1, %%ymm0\n\t"
+        "vmovdqu %2, %%ymm1\n\t"
+        "vpmaskmovd %%ymm1, %%ymm0, %0"
+        : "+m"(*(char (*)[32])ctx->address)
+        : "m"(ctx->dmask), "m"(ctx->dsrc)
+        : "ymm0", "ymm1", "memory");
+}
+
+static void guarded_vpmaskmovq_load(void *opaque) {
+    maskmov_fault_context_t *ctx = opaque;
+    __asm__ volatile(
+        "vmovdqu %2, %%ymm0\n\t"
+        "vpmaskmovq %1, %%ymm0, %%ymm1\n\t"
+        "vmovdqu %%ymm1, %0"
+        : "=m"(ctx->qdst)
+        : "m"(*(const char (*)[32])ctx->address), "m"(ctx->qmask)
+        : "ymm0", "ymm1");
+}
+
+static void guarded_vpmaskmovq_store(void *opaque) {
+    maskmov_fault_context_t *ctx = opaque;
+    __asm__ volatile(
+        "vmovdqu %1, %%ymm0\n\t"
+        "vmovdqu %2, %%ymm1\n\t"
+        "vpmaskmovq %%ymm1, %%ymm0, %0"
+        : "+m"(*(char (*)[32])ctx->address)
+        : "m"(ctx->qmask), "m"(ctx->qsrc)
+        : "ymm0", "ymm1", "memory");
+}
 
 #if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx2(void) {
@@ -164,6 +235,101 @@ static void test_vpmaskmovq_store(void) {
     TEST_ASSERT(dst[3] == -4,   "vpmaskmovq store dst[3]=%lld (not written)", (long long)dst[3]);
 }
 
+static void test_vpmaskmov_fault_suppression(void) {
+    TEST_START("VPMASKMOVD/Q inactive-lane fault suppression");
+
+    long page_size = sysconf(_SC_PAGESIZE);
+    TEST_ASSERT(page_size > 0, "vpmaskmov page size available");
+    if (page_size <= 0) return;
+
+    uint8_t *pages = mmap(NULL, (size_t)page_size * 2,
+                          PROT_READ | PROT_WRITE,
+                          MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    TEST_ASSERT(pages != MAP_FAILED, "vpmaskmov two-page allocation");
+    if (pages == MAP_FAILED) return;
+
+    int protect_result = mprotect(pages + page_size, (size_t)page_size,
+                                  PROT_NONE);
+    TEST_ASSERT(protect_result == 0, "vpmaskmov guard page protection");
+    if (protect_result != 0) {
+        munmap(pages, (size_t)page_size * 2);
+        return;
+    }
+
+    struct sigaction sa = {0}, old_segv;
+    sa.sa_handler = maskmov_fault_handler;
+    sigemptyset(&sa.sa_mask);
+    sigaction(SIGSEGV, &sa, &old_segv);
+
+    maskmov_fault_context_t ctx = {0};
+    ctx.address = pages + page_size - 16;
+
+    int32_t *dmem = ctx.address;
+    for (int i = 0; i < 4; ++i) {
+        dmem[i] = 100 + i;
+        ctx.dmask[i] = INT32_MIN;
+        ctx.dsrc[i] = 1000 + i;
+    }
+    for (int i = 4; i < 8; ++i) {
+        ctx.dmask[i] = 0;
+        ctx.dsrc[i] = 1000 + i;
+        ctx.ddst[i] = -1;
+    }
+
+    int ok = run_without_maskmov_fault(guarded_vpmaskmovd_load, &ctx);
+    TEST_ASSERT(ok, "vpmaskmovd load suppresses inactive guard-page faults");
+    if (ok) {
+        for (int i = 0; i < 4; ++i)
+            TEST_ASSERT(ctx.ddst[i] == 100 + i,
+                        "vpmaskmovd active load lane %d", i);
+        for (int i = 4; i < 8; ++i)
+            TEST_ASSERT(ctx.ddst[i] == 0,
+                        "vpmaskmovd inactive load lane %d is zero", i);
+    }
+
+    ok = run_without_maskmov_fault(guarded_vpmaskmovd_store, &ctx);
+    TEST_ASSERT(ok, "vpmaskmovd store suppresses inactive guard-page faults");
+    if (ok) {
+        for (int i = 0; i < 4; ++i)
+            TEST_ASSERT(dmem[i] == 1000 + i,
+                        "vpmaskmovd active store lane %d", i);
+    }
+
+    int64_t *qmem = ctx.address;
+    for (int i = 0; i < 2; ++i) {
+        qmem[i] = 200 + i;
+        ctx.qmask[i] = INT64_MIN;
+        ctx.qsrc[i] = 2000 + i;
+    }
+    for (int i = 2; i < 4; ++i) {
+        ctx.qmask[i] = 0;
+        ctx.qsrc[i] = 2000 + i;
+        ctx.qdst[i] = -1;
+    }
+
+    ok = run_without_maskmov_fault(guarded_vpmaskmovq_load, &ctx);
+    TEST_ASSERT(ok, "vpmaskmovq load suppresses inactive guard-page faults");
+    if (ok) {
+        for (int i = 0; i < 2; ++i)
+            TEST_ASSERT(ctx.qdst[i] == 200 + i,
+                        "vpmaskmovq active load lane %d", i);
+        for (int i = 2; i < 4; ++i)
+            TEST_ASSERT(ctx.qdst[i] == 0,
+                        "vpmaskmovq inactive load lane %d is zero", i);
+    }
+
+    ok = run_without_maskmov_fault(guarded_vpmaskmovq_store, &ctx);
+    TEST_ASSERT(ok, "vpmaskmovq store suppresses inactive guard-page faults");
+    if (ok) {
+        for (int i = 0; i < 2; ++i)
+            TEST_ASSERT(qmem[i] == 2000 + i,
+                        "vpmaskmovq active store lane %d", i);
+    }
+
+    sigaction(SIGSEGV, &old_segv, NULL);
+    munmap(pages, (size_t)page_size * 2);
+}
+
 static void test_maskmov_boundaries(void) {
     float src[8] = {1,2,3,4,5,6,7,8}, dst[8];
     uint32_t sign_masks[8] = {0x7fffffffu,0x80000000u,1,0xffffffffu,0,0x80000001u,0x40000000u,0x80000000u};
@@ -198,6 +364,7 @@ int main(void) {
     test_vpmaskmovd_store();
     test_vpmaskmovq_load();
     test_vpmaskmovq_store();
+    test_vpmaskmov_fault_suppression();
     test_maskmov_boundaries();
     TEST_END();
 }
