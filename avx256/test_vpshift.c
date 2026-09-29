@@ -27,6 +27,34 @@
         : "=m"(dst) : "m"(src), "m"(count) : "ymm0", "ymm1", "xmm2"); \
 } while (0)
 
+#define RUN_VPSLLDQ_XMM(count, src, dst) do { \
+    __asm__ volatile( \
+        "vmovdqu %1, %%xmm2\n\t" \
+        "vpslldq $" STR(count) ", %%xmm2, %%xmm5\n\t" \
+        "vmovdqu %%xmm5, %0" \
+        : "=m"(dst) : "m"(src) : "xmm2", "xmm5"); \
+} while (0)
+
+#define RUN_VPSLLDQ_YMM_DISTINCT(count, src, initial_dst, dst, src_after) do { \
+    __asm__ volatile( \
+        "vmovdqu %2, %%ymm2\n\t" \
+        "vmovdqu %3, %%ymm5\n\t" \
+        "vpslldq $" STR(count) ", %%ymm2, %%ymm5\n\t" \
+        "vmovdqu %%ymm5, %0\n\t" \
+        "vmovdqu %%ymm2, %1" \
+        : "=m"(dst), "=m"(src_after) \
+        : "m"(src), "m"(initial_dst) \
+        : "ymm2", "ymm5"); \
+} while (0)
+
+#define RUN_VPSLLDQ_YMM_ALIAS(count, src, dst) do { \
+    __asm__ volatile( \
+        "vmovdqu %1, %%ymm3\n\t" \
+        "vpslldq $" STR(count) ", %%ymm3, %%ymm3\n\t" \
+        "vmovdqu %%ymm3, %0" \
+        : "=m"(dst) : "m"(src) : "ymm3"); \
+} while (0)
+
 #if ENABLE_RUNTIME_CPU_CHECKS
 static int check_avx2(void) {
     uint32_t eax, ebx, ecx, edx;
@@ -194,6 +222,69 @@ static void test_vpsraw(void) {
     TEST_ASSERT(r[0] == -1, "vpsraw neg r[0]=%d", r[0]);
 }
 
+static void reference_vpslldq(uint8_t *dst, const uint8_t *src, int lanes,
+                              unsigned count) {
+    memset(dst, 0, (size_t)lanes * 16);
+    if (count > 15) return;
+    for (int lane = 0; lane < lanes; ++lane) {
+        for (unsigned byte = count; byte < 16; ++byte) {
+            dst[lane * 16 + byte] = src[lane * 16 + byte - count];
+        }
+    }
+}
+
+static void assert_vpslldq_bytes(const uint8_t *actual, const uint8_t *expected,
+                                 int bytes, const char *form, unsigned count) {
+    for (int i = 0; i < bytes; ++i) {
+        TEST_ASSERT(actual[i] == expected[i],
+                    "vpslldq %s count %u byte %d: 0x%02x != 0x%02x",
+                    form, count, i, actual[i], expected[i]);
+    }
+}
+
+static void test_vpslldq_regressions(void) {
+    TEST_START("VPSLLDQ destination and lane placement regressions");
+
+    xmm_t xmm_src, xmm_dst, xmm_expected;
+    for (int i = 0; i < 16; ++i) xmm_src.u8[i] = (uint8_t)(0x11 + i * 7);
+    RUN_VPSLLDQ_XMM(8, xmm_src, xmm_dst);
+    reference_vpslldq(xmm_expected.u8, xmm_src.u8, 1, 8);
+    assert_vpslldq_bytes(xmm_dst.u8, xmm_expected.u8, 16, "xmm", 8);
+
+    ymm_t src, initial_dst, dst, src_after, expected;
+    for (int i = 0; i < 32; ++i) {
+        src.u8[i] = (uint8_t)(0x21 + i * 5);
+        initial_dst.u8[i] = 0xa5;
+    }
+
+#define CHECK_DISTINCT(count) do { \
+    RUN_VPSLLDQ_YMM_DISTINCT(count, src, initial_dst, dst, src_after); \
+    reference_vpslldq(expected.u8, src.u8, 2, count); \
+    assert_vpslldq_bytes(dst.u8, expected.u8, 32, "ymm distinct", count); \
+    assert_vpslldq_bytes(src_after.u8, src.u8, 32, "source preserved", count); \
+} while (0)
+
+    CHECK_DISTINCT(0);
+    CHECK_DISTINCT(1);
+    CHECK_DISTINCT(8);
+    CHECK_DISTINCT(15);
+    CHECK_DISTINCT(16);
+
+#undef CHECK_DISTINCT
+
+#define CHECK_ALIAS(count) do { \
+    RUN_VPSLLDQ_YMM_ALIAS(count, src, dst); \
+    reference_vpslldq(expected.u8, src.u8, 2, count); \
+    assert_vpslldq_bytes(dst.u8, expected.u8, 32, "ymm aliased", count); \
+} while (0)
+
+    CHECK_ALIAS(1);
+    CHECK_ALIAS(8);
+    CHECK_ALIAS(16);
+
+#undef CHECK_ALIAS
+}
+
 static void test_shift_count_boundaries(void) {
     TEST_START("VPSHIFT count boundaries");
     uint16_t w[16], wr[16];
@@ -272,6 +363,7 @@ int main(void) {
     test_vpsrad();
     test_vpsraq();
     test_vpsraw();
+    test_vpslldq_regressions();
     test_shift_count_boundaries();
     TEST_END();
 }
