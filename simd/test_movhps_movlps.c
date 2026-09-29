@@ -12,6 +12,48 @@
  * Note: Do not use static linking.
  */
 #include "../common.h"
+#include <setjmp.h>
+#include <signal.h>
+
+/* 0F 17 requires a memory destination; ModRM.mod=3 must raise #UD. */
+extern void movhps_invalid_modreg(void);
+
+__asm__ (
+    ".text\n"
+    ".globl movhps_invalid_modreg\n"
+    ".type movhps_invalid_modreg, @function\n"
+    "movhps_invalid_modreg:\n\t"
+    ".byte 0x0f, 0x17, 0xc8\n\t"
+    "ret\n"
+    ".size movhps_invalid_modreg, .-movhps_invalid_modreg\n"
+);
+
+static sigjmp_buf movhps_sigill_env;
+static volatile sig_atomic_t movhps_saw_sigill;
+
+static void movhps_sigill_handler(int signal_number) {
+    (void)signal_number;
+    movhps_saw_sigill = 1;
+    siglongjmp(movhps_sigill_env, 1);
+}
+
+static void test_movhps_invalid_register_form(void) {
+    struct sigaction action = { 0 };
+    struct sigaction previous_action;
+
+    action.sa_handler = movhps_sigill_handler;
+    sigemptyset(&action.sa_mask);
+    sigaction(SIGILL, &action, &previous_action);
+    movhps_saw_sigill = 0;
+
+    if (sigsetjmp(movhps_sigill_env, 1) == 0) {
+        movhps_invalid_modreg();
+    }
+
+    sigaction(SIGILL, &previous_action, NULL);
+    TEST_ASSERT(movhps_saw_sigill,
+        "MOVHPS 0F 17 with ModRM.mod=3 must raise SIGILL");
+}
 
 static void test_movlps_load(void) {
     float mem[2] = { 1.0f, 2.0f };
@@ -196,6 +238,7 @@ int main(void) {
     test_movlpd_store();
     test_movhpd_load();
     test_movhpd_store();
+    test_movhps_invalid_register_form();
     test_partial_moves_all_unaligned_offsets();
     TEST_END();
 }
