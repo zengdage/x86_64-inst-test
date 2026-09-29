@@ -56,6 +56,44 @@ static void test_vtestpd_256_high_lane(void) {
     assert_vtest_flags(flags, 0, 1, "vtestpd ymm highest lane");
 }
 
+static void test_vtest_nonzero_modrm_reg(void) {
+    xmm_t ps_a = {0}, ps_b = {0}, ps_xmm0 = {0};
+    ymm_t pd_a = {0}, pd_b = {0}, pd_ymm0 = {0};
+    uint64_t flags;
+
+    /*
+     * VTEST has no VEX.vvvv source. Its first source is ModRM.reg.
+     * Keep XMM0 deliberately opposite to XMM3 so using vex.v by mistake
+     * produces ZF=0/CF=1 instead of the expected ZF=1/CF=0.
+     */
+    ps_b.u32[0] = UINT32_C(0x80000000);
+    ps_xmm0.u32[0] = UINT32_C(0x80000000);
+    __asm__ volatile (
+        "vmovdqu %1, %%xmm0\n\t"
+        "vmovdqu %2, %%xmm3\n\t"
+        "vtestps %3, %%xmm3\n\t"
+        "pushfq\n\t"
+        "popq %0"
+        : "=r"(flags)
+        : "m"(ps_xmm0), "m"(ps_a), "m"(ps_b)
+        : "xmm0", "xmm3", "cc");
+    assert_vtest_flags(flags, 1, 0, "vtestps uses ModRM.reg xmm3");
+
+    /* Also cover the YMM upper-half lookup with a nonzero ModRM.reg. */
+    pd_b.u64[3] = UINT64_C(0x8000000000000000);
+    pd_ymm0.u64[3] = UINT64_C(0x8000000000000000);
+    __asm__ volatile (
+        "vmovdqu %1, %%ymm0\n\t"
+        "vmovdqu %2, %%ymm5\n\t"
+        "vtestpd %3, %%ymm5\n\t"
+        "pushfq\n\t"
+        "popq %0"
+        : "=r"(flags)
+        : "m"(pd_ymm0), "m"(pd_a), "m"(pd_b)
+        : "ymm0", "ymm5", "cc");
+    assert_vtest_flags(flags, 1, 0, "vtestpd uses ModRM.reg ymm5 upper lane");
+}
+
 static void test_vtestps_all_positive(void) {
     xmm_t a = { .f32 = {1.0f, 2.0f, 3.0f, 4.0f} };
     xmm_t b = { .f32 = {5.0f, 6.0f, 7.0f, 8.0f} };
@@ -131,6 +169,7 @@ int main(void) {
     test_vtestps_256();
     test_vtestps_flag_matrix();
     test_vtestpd_256_high_lane();
+    test_vtest_nonzero_modrm_reg();
     __asm__ volatile ("vzeroupper");
     TEST_END();
 }
