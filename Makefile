@@ -19,7 +19,7 @@ CFLAGS += -DENABLE_MXCSR_CHECK=1
 endif
 
 # Directories
-DIRS    = integer float simd system crypto avx512 avx256
+DIRS    = integer integer32 float simd system crypto avx512 avx256
 
 # Per-category extra flags
 integer_FLAGS = -madx -mbmi -mbmi2 -mlzcnt -mpopcnt -mmovbe -mcrc32
@@ -32,6 +32,7 @@ avx256_FLAGS  = -mavx2 -mfma
 
 # Collect all sources per category
 integer_SRCS := $(wildcard integer/*.c)
+integer32_SRCS := $(wildcard integer32/*.c)
 float_SRCS   := $(wildcard float/*.c)
 simd_SRCS    := $(wildcard simd/*.c)
 system_SRCS  := $(wildcard system/*.c)
@@ -41,6 +42,7 @@ avx256_SRCS  := $(wildcard avx256/*.c)
 
 # Derive binary names (strip .c, prefix with bin/)
 integer_BINS := $(patsubst integer/%.c, integer/bin/%, $(integer_SRCS))
+integer32_BINS := $(patsubst integer32/%.c, integer32/bin/%, $(integer32_SRCS))
 float_BINS   := $(patsubst float/%.c,   float/bin/%,   $(float_SRCS))
 simd_BINS    := $(patsubst simd/%.c,    simd/bin/%,    $(simd_SRCS))
 system_BINS  := $(patsubst system/%.c,  system/bin/%,  $(system_SRCS))
@@ -48,7 +50,7 @@ crypto_BINS  := $(patsubst crypto/%.c,  crypto/bin/%,  $(crypto_SRCS))
 avx512_BINS  := $(patsubst avx512/%.c,  avx512/bin/%,  $(avx512_SRCS))
 avx256_BINS  := $(patsubst avx256/%.c,  avx256/bin/%,  $(avx256_SRCS))
 
-ALL_BINS := $(integer_BINS) $(float_BINS) $(simd_BINS) $(system_BINS) $(crypto_BINS) $(avx512_BINS) $(avx256_BINS)
+ALL_BINS := $(integer_BINS) $(integer32_BINS) $(float_BINS) $(simd_BINS) $(system_BINS) $(crypto_BINS) $(avx512_BINS) $(avx256_BINS)
 
 .PHONY: all run box64 clean $(addprefix run-, $(DIRS))
 
@@ -57,6 +59,9 @@ all: $(ALL_BINS)
 # Pattern rules per category
 integer/bin/%: integer/%.c | integer/bin
 	$(CC) $(CFLAGS) $(integer_FLAGS) -o $@ $< $(LDFLAGS)
+
+integer32/bin/%: integer32/%.c | integer32/bin
+	$(CC) $(CFLAGS) -m32 -o $@ $< $(LDFLAGS)
 
 float/bin/%: float/%.c | float/bin
 	$(CC) $(CFLAGS) $(float_FLAGS) -o $@ $< $(LDFLAGS) -lm
@@ -77,7 +82,7 @@ avx256/bin/%: avx256/%.c | avx256/bin
 	$(CC) $(CFLAGS) $(avx256_FLAGS) -o $@ $< $(LDFLAGS)
 
 # Create bin directories
-integer/bin float/bin simd/bin system/bin crypto/bin avx512/bin avx256/bin:
+integer/bin integer32/bin float/bin simd/bin system/bin crypto/bin avx512/bin avx256/bin:
 	mkdir -p $@
 
 # Run all tests (compile first)
@@ -97,7 +102,7 @@ run: all
 	if [ -n "$$ERRORS" ]; then printf "$$ERRORS\n"; exit 1; fi
 
 # Run all pre-compiled bins via box64 without building
-ALL_BIN_DIRS = integer/bin float/bin simd/bin system/bin crypto/bin avx512/bin avx256/bin
+ALL_BIN_DIRS = integer/bin integer32/bin float/bin simd/bin system/bin crypto/bin avx512/bin avx256/bin
 BOX64 ?= box64
 box64:
 	@PASS=0; FAIL=0; ERRORS=""; \
@@ -126,6 +131,15 @@ run-integer: $(integer_BINS)
 		else FAIL=$$((FAIL+1)); echo "FAILED: $$bin"; fi; \
 	done; \
 	echo "integer: $$PASS passed, $$FAIL failed"
+
+run-integer32: $(integer32_BINS)
+	@PASS=0; FAIL=0; \
+	for bin in $(integer32_BINS); do \
+		if $$bin > /dev/null 2>&1; then PASS=$$((PASS+1)); \
+		else FAIL=$$((FAIL+1)); echo "FAILED: $$bin"; fi; \
+	done; \
+	echo "integer32: $$PASS passed, $$FAIL failed"; \
+	test "$$FAIL" -eq 0
 
 run-float: $(float_BINS)
 	@PASS=0; FAIL=0; \
@@ -168,4 +182,4 @@ run-avx512: $(avx512_BINS)
 	echo "avx512: $$PASS passed, $$FAIL failed"
 
 clean:
-	rm -rf integer/bin float/bin simd/bin system/bin crypto/bin avx512/bin avx256/bin
+	rm -rf integer/bin integer32/bin float/bin simd/bin system/bin crypto/bin avx512/bin avx256/bin

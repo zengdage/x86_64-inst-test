@@ -60,7 +60,9 @@ static inline uint64_t get_flags(void) {
 #define OF_FLAG  (1UL << 11)
 
 typedef union {
+#if defined(__SIZEOF_INT128__)
     __int128 i128;
+#endif
     int64_t  i64[2];
     int32_t  i32[4];
     int16_t  i16[8];

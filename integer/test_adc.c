@@ -122,6 +122,7 @@ static void test_adc_sizes(void) {
     );
     TEST_ASSERT(r16 == 0, "adcw 0xFFFF+0+1 expected 0, got 0x%x", r16);
     TEST_ASSERT(flags & CF_FLAG, "adcw overflow: CF should be set");
+    TEST_ASSERT(flags & ZF_FLAG, "adcw 0xFFFF+0+1: ZF should be set");
 
     /* 32-bit */
     __asm__ volatile (

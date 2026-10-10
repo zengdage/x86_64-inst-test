@@ -13,6 +13,7 @@ x86_64-inst-test/
 ├── common.h          # Shared test macros and type definitions
 ├── Makefile
 ├── integer/          # 59 tests — General-purpose integer instructions
+├── integer32/        # 32-bit-only instructions (AAM/AAD, built with -m32)
 ├── float/            # 30 tests — x87 FPU and SSE scalar/packed float
 ├── simd/             # 62 tests — SSE/SSSE3/SSE4/AVX/AVX2
 ├── avx256/           # 16 tests — AVX/AVX2 256-bit supplemental
@@ -38,6 +39,7 @@ x86_64-inst-test/
 ## Requirements
 
 - **Compiler**: GCC with support for the target instruction sets
+- **32-bit tests**: GCC multilib and 32-bit libc development/runtime support
 - **Architecture**: x86-64 (compilation host)
 - **CPU features needed at runtime**: SSE4.2, AVX2, FMA, AES-NI, SHA, AVX-512 (F/BW/DQ/VL/IFMA/VBMI), GFNI, VAES, VPCLMULQDQ, ADX, BMI1/BMI2
 
@@ -79,6 +81,7 @@ make -B ENABLE_RUNTIME_CPU_CHECKS=1 run
 
 # Run a specific category
 make run-integer
+make run-integer32
 make run-float
 make run-simd
 make run-system
