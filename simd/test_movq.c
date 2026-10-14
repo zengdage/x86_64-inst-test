@@ -161,6 +161,46 @@ static void test_vmovq_upper_ymm_clear_and_unaligned_memory(void) {
     }
 }
 
+static void test_vmovq_vex_d6_destination_clear(void) {
+    TEST_START("VMOVQ VEX.D6 destination clearing");
+    const uint32_t input[8] = {UINT32_C(0x01234567), UINT32_C(0x89abcdef),
+                               UINT32_C(0x13579bdf), UINT32_C(0x2468ace0),
+                               UINT32_C(0x11111111), UINT32_C(0x22222222),
+                               UINT32_C(0x33333333), UINT32_C(0x44444444)};
+    const uint32_t expected[8] = {UINT32_C(0x01234567), UINT32_C(0x89abcdef),
+                                  0, 0, 0, 0, 0, 0};
+    const uint32_t poison[8] = {UINT32_C(0xdeadbeef), UINT32_C(0xdeadbeef),
+                                UINT32_C(0xdeadbeef), UINT32_C(0xdeadbeef),
+                                UINT32_C(0xdeadbeef), UINT32_C(0xdeadbeef),
+                                UINT32_C(0xdeadbeef), UINT32_C(0xdeadbeef)};
+    uint32_t output[8];
+
+#define CHECK_VMOVQ_D6(name, encoding, result) \
+    do { \
+        __asm__ volatile( \
+            "vmovups %2, %%ymm0\n\t" \
+            "vxorps %%ymm2, %%ymm2, %%ymm2\n\t" \
+            "vmovups %2, %%ymm3\n\t" \
+            "vaddps %%ymm3, %%ymm2, %%ymm4\n\t" \
+            "vmovupd %1, %%ymm1\n\t" \
+            encoding "\n\t" \
+            "vmovups " result ", %0" \
+            : "=m"(output) \
+            : "m"(input), "m"(poison) \
+            : "ymm0", "ymm1", "ymm2", "ymm3", "ymm4"); \
+        for (int lane = 0; lane < 8; ++lane) \
+            TEST_ASSERT(output[lane] == expected[lane], \
+                        "%s[%d]: got %08x, expected %08x", \
+                        name, lane, output[lane], expected[lane]); \
+    } while (0)
+
+    /* Force VEX.128.66.0F D6; assemblers may select the F3.0F 7E form. */
+    CHECK_VMOVQ_D6("VMOVQ register (D6)", ".byte 0xc5, 0xf9, 0xd6, 0xc8", "%%ymm0");
+    CHECK_VMOVQ_D6("VMOVQ alias (D6)", ".byte 0xc5, 0xf9, 0xd6, 0xc9", "%%ymm1");
+
+#undef CHECK_VMOVQ_D6
+}
+
 int main(void) {
     TEST_START("MOVQ instruction");
     test_movq_gpr_to_xmm();
@@ -171,5 +211,6 @@ int main(void) {
     test_movq_zero();
     test_movq_max();
     test_vmovq_upper_ymm_clear_and_unaligned_memory();
+    test_vmovq_vex_d6_destination_clear();
     TEST_END();
 }

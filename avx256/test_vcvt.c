@@ -110,6 +110,49 @@ static void test_vcvtpd2ps(void) {
     TEST_ASSERT(r2[0] == 1.5f, "vcvtpd2ps mem r[0]=%f", r2[0]);
 }
 
+static void test_vcvtpd2ps_destination_clear(void) {
+    TEST_START("VCVTPD2PS destination clearing");
+    const double input[4] = {1.0, 2.0, -3.0, 4.0};
+    const uint32_t poison[8] = {UINT32_C(0xdeadbeef), UINT32_C(0xdeadbeef),
+                                UINT32_C(0xdeadbeef), UINT32_C(0xdeadbeef),
+                                UINT32_C(0xdeadbeef), UINT32_C(0xdeadbeef),
+                                UINT32_C(0xdeadbeef), UINT32_C(0xdeadbeef)};
+    const uint32_t expected128[8] = {UINT32_C(0x3f800000), UINT32_C(0x40000000),
+                                     0, 0, 0, 0, 0, 0};
+    const uint32_t expected256[8] = {UINT32_C(0x3f800000), UINT32_C(0x40000000),
+                                     UINT32_C(0xc0400000), UINT32_C(0x40800000),
+                                     0, 0, 0, 0};
+    uint32_t output[8];
+
+#define CHECK_VCVTPD2PS(name, instruction, result, expected) \
+    do { \
+        __asm__ volatile( \
+            "vmovups %2, %%ymm0\n\t" \
+            "vxorps %%ymm2, %%ymm2, %%ymm2\n\t" \
+            "vmovups %2, %%ymm3\n\t" \
+            "vaddps %%ymm3, %%ymm2, %%ymm4\n\t" \
+            "vmovupd %1, %%ymm1\n\t" \
+            instruction "\n\t" \
+            "vmovups " result ", %0" \
+            : "=m"(output) \
+            : "m"(input), "m"(poison) \
+            : "ymm0", "ymm1", "ymm2", "ymm3", "ymm4"); \
+        for (int lane = 0; lane < 8; ++lane) \
+            TEST_ASSERT(output[lane] == (expected)[lane], \
+                        "%s[%d]: got %08x, expected %08x", \
+                        name, lane, output[lane], (expected)[lane]); \
+    } while (0)
+
+    CHECK_VCVTPD2PS("VCVTPD2PS xmm register", "vcvtpd2ps %%xmm1, %%xmm0", "%%ymm0", expected128);
+    CHECK_VCVTPD2PS("VCVTPD2PS xmm memory", "vcvtpd2psx %1, %%xmm0", "%%ymm0", expected128);
+    CHECK_VCVTPD2PS("VCVTPD2PS xmm alias", "vcvtpd2ps %%xmm1, %%xmm1", "%%ymm1", expected128);
+    CHECK_VCVTPD2PS("VCVTPD2PS ymm register", "vcvtpd2ps %%ymm1, %%xmm0", "%%ymm0", expected256);
+    CHECK_VCVTPD2PS("VCVTPD2PS ymm memory", "vcvtpd2psy %1, %%xmm0", "%%ymm0", expected256);
+    CHECK_VCVTPD2PS("VCVTPD2PS ymm alias", "vcvtpd2ps %%ymm1, %%xmm1", "%%ymm1", expected256);
+
+#undef CHECK_VCVTPD2PS
+}
+
 static void test_vcvtps2dq(void) {
     TEST_START("VCVTPS2DQ (256-bit: 8 float->int32)");
     float a[8] = {1.7f,-2.3f,3.5f,-4.5f,5.0f,-6.0f,7.9f,-8.1f};
@@ -499,6 +542,7 @@ int main(void) {
     test_vcvtdq2ps();
     test_vcvtpd2dq();
     test_vcvtpd2ps();
+    test_vcvtpd2ps_destination_clear();
     test_vcvtps2dq();
     test_vcvtps2pd();
     test_vcvtsd2si();
