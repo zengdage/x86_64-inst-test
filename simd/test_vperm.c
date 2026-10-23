@@ -1,15 +1,69 @@
 /*
- * test_vperm.c - Test VPERMD/VPERMQ/VPERMPD/VPERMPS instructions (AVX2)
+ * test_vperm.c - Test VPERMILPS/VPERMD/VPERMQ/VPERMPD/VPERMPS instructions
  *
  * VPERMQ:  Permute 64-bit qwords across lanes using imm8 (AVX2).
  * VPERMPD: Permute 64-bit doubles across lanes using imm8 (AVX2).
  * VPERMD:  Permute 32-bit dwords across lanes using index vector (AVX2).
  * VPERMPS: Permute 32-bit floats across lanes using index vector (AVX2).
+ * VPERMILPS: Permute 32-bit floats within each 128-bit lane (AVX).
  *
  * Compile: gcc -o test_vperm simd/test_vperm.c -O0 -mavx2
  * Note: Do not use static linking.
  */
 #include "../common.h"
+
+static void test_vpermilps_128(void) {
+    ymm_t src = { .f32 = {1.0f, 2.0f, 3.0f, 4.0f} };
+    ymm_t control = { .u32 = {7, 4, 5, 6} };
+    ymm_t poison = { .u32 = {
+        UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX,
+        UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX
+    } };
+    ymm_t immediate_dst;
+    ymm_t variable_dst;
+
+    /* Immediate 0x1b reverses the four elements in the XMM source. */
+    __asm__ volatile (
+        "vmovdqa %2, %%ymm1\n\t"
+        "vmovaps %1, %%xmm0\n\t"
+        "vpermilps $0x1b, %%xmm0, %%xmm1\n\t"
+        "vmovdqa %%ymm1, %0"
+        : "=m"(immediate_dst) : "m"(src), "m"(poison) : "xmm0", "xmm1"
+    );
+    for (int i = 0; i < 4; i++) {
+        TEST_ASSERT(immediate_dst.f32[i] == src.f32[3 - i],
+            "vpermilps xmm immediate lane %d: got %f",
+            i, immediate_dst.f32[i]);
+    }
+    for (int i = 4; i < 8; i++) {
+        TEST_ASSERT(immediate_dst.u32[i] == 0,
+            "VEX.128 vpermilps immediate zeroes upper YMM lane %d: got 0x%08x",
+            i, immediate_dst.u32[i]);
+    }
+
+    /* Variable selectors use only the low two bits: 7,4,5,6 -> 3,0,1,2. */
+    __asm__ volatile (
+        "vmovdqa %3, %%ymm2\n\t"
+        "vmovaps %1, %%xmm0\n\t"
+        "vmovdqa %2, %%xmm1\n\t"
+        "vpermilps %%xmm1, %%xmm0, %%xmm2\n\t"
+        "vmovdqa %%ymm2, %0"
+        : "=m"(variable_dst)
+        : "m"(src), "m"(control), "m"(poison)
+        : "xmm0", "xmm1", "xmm2"
+    );
+    const float expected[] = {4.0f, 1.0f, 2.0f, 3.0f};
+    for (int i = 0; i < 4; i++) {
+        TEST_ASSERT(variable_dst.f32[i] == expected[i],
+            "vpermilps xmm variable lane %d: got %f",
+            i, variable_dst.f32[i]);
+    }
+    for (int i = 4; i < 8; i++) {
+        TEST_ASSERT(variable_dst.u32[i] == 0,
+            "VEX.128 vpermilps variable zeroes upper YMM lane %d: got 0x%08x",
+            i, variable_dst.u32[i]);
+    }
+}
 
 static void test_vpermq_identity(void) {
     ymm_t src = { .i64 = {10, 20, 30, 40} };
@@ -144,7 +198,8 @@ static void test_vpermps(void) {
 }
 
 int main(void) {
-    TEST_START("VPERMD/VPERMQ/VPERMPD/VPERMPS instructions (AVX2)");
+    TEST_START("VPERMILPS/VPERMD/VPERMQ/VPERMPD/VPERMPS instructions");
+    test_vpermilps_128();
     test_vpermq_identity();
     test_vpermq_reverse();
     test_vpermq_broadcast();

@@ -1,5 +1,5 @@
 /*
- * test_vshufps_pd.c - Test VSHUFPS/VSHUFPD (256-bit AVX)
+ * test_vshufps_pd.c - Test VSHUFPS/VSHUFPD (128/256-bit AVX)
  *
  * AVX 256-bit shuffle operates on two 128-bit lanes independently.
  * VSHUFPS: Each 128-bit lane shuffles like SSE SHUFPS.
@@ -9,6 +9,56 @@
  * Note: Do not use static linking.
  */
 #include "../common.h"
+
+static void test_vshufps_128(void) {
+    ymm_t a = { .f32 = {1.0f, 2.0f, 3.0f, 4.0f} };
+    ymm_t b = { .f32 = {10.0f, 20.0f, 30.0f, 40.0f} };
+    ymm_t poison = { .u32 = {
+        UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX,
+        UINT32_MAX, UINT32_MAX, UINT32_MAX, UINT32_MAX
+    } };
+    ymm_t dst;
+
+    /* 0x1b: a[3], a[2], b[1], b[0]. VEX.128 zeroes upper YMM. */
+    __asm__ volatile (
+        "vmovdqa %3, %%ymm1\n\t"
+        "vmovaps %1, %%xmm0\n\t"
+        "vshufps $0x1b, %2, %%xmm0, %%xmm1\n\t"
+        "vmovdqa %%ymm1, %0"
+        : "=m"(dst) : "m"(a), "m"(b), "m"(poison) : "xmm0", "xmm1"
+    );
+    TEST_ASSERT(dst.f32[0] == 4.0f, "vshufps xmm [0]: got %f", dst.f32[0]);
+    TEST_ASSERT(dst.f32[1] == 3.0f, "vshufps xmm [1]: got %f", dst.f32[1]);
+    TEST_ASSERT(dst.f32[2] == 20.0f, "vshufps xmm [2]: got %f", dst.f32[2]);
+    TEST_ASSERT(dst.f32[3] == 10.0f, "vshufps xmm [3]: got %f", dst.f32[3]);
+    for (int i = 4; i < 8; i++) {
+        TEST_ASSERT(dst.u32[i] == 0,
+            "VEX.128 vshufps zeroes upper YMM lane %d: got 0x%08x",
+            i, dst.u32[i]);
+    }
+}
+
+static void test_vshufpd_128(void) {
+    ymm_t a = { .f64 = {1.0, 2.0} };
+    ymm_t b = { .f64 = {10.0, 20.0} };
+    ymm_t poison = { .u64 = {UINT64_MAX, UINT64_MAX, UINT64_MAX, UINT64_MAX} };
+    ymm_t dst;
+
+    /* Only imm8 bits 1:0 are used: select a[1], b[1]. */
+    __asm__ volatile (
+        "vmovdqa %3, %%ymm1\n\t"
+        "vmovapd %1, %%xmm0\n\t"
+        "vshufpd $0xff, %2, %%xmm0, %%xmm1\n\t"
+        "vmovdqa %%ymm1, %0"
+        : "=m"(dst) : "m"(a), "m"(b), "m"(poison) : "xmm0", "xmm1"
+    );
+    TEST_ASSERT(dst.f64[0] == 2.0, "vshufpd xmm [0]: got %f", dst.f64[0]);
+    TEST_ASSERT(dst.f64[1] == 20.0, "vshufpd xmm [1]: got %f", dst.f64[1]);
+    TEST_ASSERT(dst.u64[2] == 0,
+        "VEX.128 vshufpd zeroes upper YMM qword 2: got 0x%016" PRIx64, dst.u64[2]);
+    TEST_ASSERT(dst.u64[3] == 0,
+        "VEX.128 vshufpd zeroes upper YMM qword 3: got 0x%016" PRIx64, dst.u64[3]);
+}
 
 static void test_vshufps_256(void) {
     ymm_t a = { .f32 = {1.0f,2.0f,3.0f,4.0f, 5.0f,6.0f,7.0f,8.0f} };
@@ -96,7 +146,9 @@ static void test_vshuffle_immediate_and_width_boundaries(void) {
 }
 
 int main(void) {
-    TEST_START("VSHUFPS/VSHUFPD instructions (AVX 256-bit)");
+    TEST_START("VSHUFPS/VSHUFPD instructions (AVX 128/256-bit)");
+    test_vshufps_128();
+    test_vshufpd_128();
     test_vshufps_256();
     test_vshufps_identity();
     test_vshufpd_256();
