@@ -103,6 +103,23 @@ static void test_pmuludq_basic(void) {
         "pmuludq 100*200: expected 20000, got %lu", dst.u64[1]);
 }
 
+static void test_pmuludq_unsigned_boundaries(void) {
+    xmm_t a = { .u32 = {UINT32_MAX, UINT32_MAX, 0x80000000U, 0} };
+    xmm_t b = { .u32 = {2, 0, 2, UINT32_MAX} };
+    xmm_t dst;
+
+    __asm__ volatile (
+        "movdqa %1, %%xmm0\n\t"
+        "pmuludq %2, %%xmm0\n\t"
+        "movdqa %%xmm0, %0"
+        : "=m"(dst) : "m"(a), "m"(b) : "xmm0"
+    );
+    TEST_ASSERT(dst.u64[0] == UINT64_C(0x1fffffffe),
+        "pmuludq UINT32_MAX*2: got 0x%016" PRIx64, dst.u64[0]);
+    TEST_ASSERT(dst.u64[1] == UINT64_C(0x100000000),
+        "pmuludq 0x80000000*2: got 0x%016" PRIx64, dst.u64[1]);
+}
+
 static void test_pmuldq_basic(void) {
     xmm_t a = { .i32 = {-1, 0, 100, 0} };
     xmm_t b = { .i32 = {-1, 0, -200, 0} };
@@ -134,6 +151,26 @@ static void test_pmulld_basic(void) {
     TEST_ASSERT(dst.i32[3] == 1, "pmulld -1*-1=1: got %d", dst.i32[3]);
 }
 
+static void test_pmulld_signed_boundaries(void) {
+    xmm_t a = { .i32 = {INT32_MIN, INT32_MAX, 0x40000000, -0x40000000} };
+    xmm_t b = { .i32 = {-1, 2, 4, 8} };
+    xmm_t dst;
+
+    __asm__ volatile (
+        "movdqa %1, %%xmm0\n\t"
+        "pmulld %2, %%xmm0\n\t"
+        "movdqa %%xmm0, %0"
+        : "=m"(dst) : "m"(a), "m"(b) : "xmm0"
+    );
+    TEST_ASSERT(dst.u32[0] == UINT32_C(0x80000000),
+        "pmulld INT32_MIN*-1 low bits: got 0x%08" PRIx32, dst.u32[0]);
+    TEST_ASSERT(dst.u32[1] == UINT32_C(0xfffffffe),
+        "pmulld INT32_MAX*2 low bits: got 0x%08" PRIx32, dst.u32[1]);
+    TEST_ASSERT(dst.u32[2] == 0 && dst.u32[3] == 0,
+        "pmulld power-of-two wraparound: [%" PRIx32 ",%" PRIx32 "]",
+        dst.u32[2], dst.u32[3]);
+}
+
 int main(void) {
     TEST_START("PMULLW/PMULHW/PMULHUW/PMULDQ/PMULUDQ/PMULLD instructions");
     test_pmullw_basic();
@@ -141,7 +178,9 @@ int main(void) {
     test_pmulhw_basic();
     test_pmulhuw_basic();
     test_pmuludq_basic();
+    test_pmuludq_unsigned_boundaries();
     test_pmuldq_basic();
     test_pmulld_basic();
+    test_pmulld_signed_boundaries();
     TEST_END();
 }

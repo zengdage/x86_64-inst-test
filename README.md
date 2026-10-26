@@ -2,7 +2,7 @@
 
 This is a AI-generated project.
 
-A comprehensive test suite for verifying x86-64 instruction behavior through binary translation. Each test case uses inline assembly to exercise specific instructions and validates results including output values and FLAGS registers.
+A comprehensive x86-64 instruction conformance suite for validating binary translators. Each test uses inline assembly to execute a specific instruction form and checks architectural results, flags, masks, exceptions, and saved state where applicable.
 
 This project is designed for testing x86-64 binary translators such as [box64](https://github.com/ptitSeb/box64).
 
@@ -12,36 +12,77 @@ This project is designed for testing x86-64 binary translators such as [box64](h
 x86_64-inst-test/
 ├── common.h          # Shared test macros and type definitions
 ├── Makefile
-├── integer/          # 59 tests — General-purpose integer instructions
+├── integer/          # 61 tests — General-purpose integer instructions
 ├── integer32/        # 32-bit-only instructions (AAM/AAD, built with -m32)
-├── float/            # 30 tests — x87 FPU and SSE scalar/packed float
-├── simd/             # 62 tests — SSE/SSSE3/SSE4/AVX/AVX2
-├── avx256/           # 16 tests — AVX/AVX2 256-bit supplemental
-├── avx512/           # 45 tests — AVX-512 (EVEX-encoded)
-├── system/           #  9 tests — User-mode system instructions
+├── float/            # 32 tests — x87 FPU and SSE scalar/packed float
+├── simd/             # 71 tests — SSE/SSSE3/SSE4/AVX/AVX2
+├── avx256/           # 25 tests — AVX/AVX2 256-bit supplemental
+├── avx512/           # 46 tests — AVX-512 (EVEX-encoded)
+├── system/           # 10 tests — User-mode system instructions
 └── crypto/           # 14 tests — AES/SHA/PCLMUL/GF2P8
 ```
 
-**Total: 235 test programs** covering ~950 x86-64 instructions.
+**Total: 260 test programs** covering more than 1,000 x86-64 instruction forms.
 
 ## Instruction Coverage
 
-| Category | Instructions | Examples |
-|----------|-------------|----------|
-| Integer | ADD, SUB, MUL, DIV, IMUL, IDIV, CMP, TEST, MOV, LEA, CMOV, SETcc, Jcc, BT/BTS/BTR/BTC, BSF/BSR, POPCNT, TZCNT, LZCNT, BSWAP, XCHG, CMPXCHG, CMPXCHG8B/16B, SHL/SHR/SAR/ROL/ROR, SHLD/SHRD, ADCX/ADOX, BMI1/BMI2, CRC32, etc. |
-| Float | x87 FPU (FLD/FST/FADD/FSUB/FMUL/FDIV/FSIN/FCOS/FSQRT/FCOM/FCOMI, etc.), SSE scalar (ADDSS/SD, MULSS/SD, SQRTSS/SD, UCOMISS/SD, etc.), SSE packed (ADDPS/PD, MULPS/PD, MINPS/PD, MAXPS/PD, ROUNDPS/PD, etc.) |
-| SIMD | Data movement (MOVDQA/U, MOVAPS/UPS, MOVNTDQ), integer arithmetic (PADDB/W/D/Q, PMULL, PMADDWD), comparison (PCMPEQ, PCMPGT, CMPPS/PD), shuffle (PSHUFB, PSHUFD, SHUFPS), pack/extend (PACK*, PMOVSX/ZX), string (PCMPISTRI/PCMPISTRM), dot product (DPPS/DPPD), etc. |
-| AVX-256 | VADDPS/PD, VMULPS/PD, VCVT*, VMASKMOV, VPSHIFT, VPGATHER, VFMADD/VFMSUB/VFNMADD/VFNMSUB (FMA3), VBLEND, VBROADCAST, VPERM, etc. |
-| AVX-512 | 512-bit arithmetic/logical/compare/shift/shuffle/permute/blend/pack/extend, k-register masking (merge and zeroing), VSCALEF, VEXTRACTF32X4/64X2, VPALIGNR zmm, etc. |
-| System | CPUID, RDTSC/RDTSCP, RDRAND/RDSEED, RDFSBASE/WRFSBASE, XSAVE/XRSTOR, XGETBV, LFENCE/MFENCE/SFENCE, etc. |
-| Crypto | AESENC/AESDEC/AESIMC/AESKEYGENASSIST, PCLMULQDQ, SHA1/SHA256, GF2P8MULB/AFFINEQB/AFFINEINVQB, VEX and EVEX variants |
+The list below describes the instruction forms exercised by the current source tree. A mnemonic appearing in multiple sections is intentional: legacy SSE/XMM, VEX/AVX2, and EVEX/AVX-512 encodings are tested separately.
+
+### Integer and control flow
+
+- Arithmetic and logic: `ADD`, `ADC`, `SUB`, `SBB`, `INC`, `DEC`, `NEG`, `MUL`, `IMUL`, `DIV`, `IDIV`, `AND`, `OR`, `XOR`, `NOT`, `CMP`, `TEST`.
+- Data movement and exchange: `MOV`, `MOVSX`, `MOVSXD`, `MOVZX`, `MOVBE`, `LEA`, `BSWAP`, `XCHG`, `XADD`.
+- Bit and shift operations: `BT`, `BTS`, `BTR`, `BTC`, `BSF`, `BSR`, `POPCNT`, `TZCNT`, `LZCNT`, `SHL/SAL`, `SHR`, `SAR`, `SHLD`, `SHRD`, `ROL`, `ROR`, `RCL`, `RCR`, `RORX`.
+- BMI/ADX/CRC: `ANDN`, `BEXTR`, `BZHI`, `BLSI`, `BLSMSK`, `BLSR`, `PDEP`, `PEXT`, `ADCX`, `ADOX`, `CRC32`.
+- Branches, flags, and atomics: `CMOVcc`, `SETcc`, `Jcc`, `LOOP/LOOPE/LOOPNE`, `CALL/RET`, `LAHF/SAHF`, `CLC/STC/CMC`, `CLD/STD`, `CMPXCHG`, `CMPXCHG8B`, `CMPXCHG16B`.
+- Stack, system-adjacent, and cache operations: `PUSH/POP/PUSHFQ/POPFQ`, `ENTER`, `NOP`, `PAUSE`, `UD2`, `CPUID`, `LFENCE/MFENCE/SFENCE`, `CLFLUSH/CLFLUSHOPT`, and `PREFETCH*`.
+- 32-bit-only: `AAM` and `AAD` in `integer32/`.
+
+### x87 and scalar SSE floating point
+
+- x87 load/store and arithmetic: `FLD`, `FST`, `FSTP`, `FILD`, `FIST`, `FISTP`, `FISTTP`, `FBLD`, `FBSTP`, `FADD(P)`, `FSUB(P/R)`, `FMUL(P)`, `FDIV(P/R)`, and `FCOM*`/`FUCOM*`.
+- x87 constants and math: `FLD1`, `FLDZ`, `FLDPI`, `FLDL2E`, `FLDL2T`, `FLDLG2`, `FLDLN2`, `FSQRT`, `FABS`, `FCHS`, `FRNDINT`, `FSIN`, `FCOS`, `FPTAN`, `FPATAN`, `F2XM1`, `FSCALE`, `FYL2X`, `FYL2XP1`, `FPREM`, `FPREM1`, and environment/control instructions.
+- Scalar SSE: `ADDSS/ADDSD`, `SUBSS/SUBSD`, `MULSS/MULSD`, `DIVSS/DIVSD`, `SQRTSS/SQRTSD`, `RCPSS/RCPPS`, `RSQRTSS/RSQRTPS`, `MINSS/MINSD`, `MAXSS/MAXSD`, `UCOMISS/UCOMISD`, and `COMISS/COMISD`.
+- Packed SSE/SSE4.1 floating point: `ADDPS/ADDPD`, `SUBPS/SUBPD`, `MULPS/MULPD`, `DIVPS/DIVPD`, `SQRTPS/SQRTPD`, `MINPS/MINPD`, `MAXPS/MAXPD`, `ROUNDPS/ROUNDPD`, `ROUNDSS/ROUNDSD`, and `CVTPD2PS`.
+
+### SSE/SSSE3/SSE4 SIMD (128-bit XMM)
+
+- Data movement and masks: `MOVAPS/MOVUPS`, `MOVAPD/MOVUPD`, `MOVDQA/MOVDQU`, `MOVHPS/MOVLPS`, `MOVHPD/MOVLPD`, `MOVMSKPS/MOVMSKPD`, `MASKMOVDQU`, `MOVNTDQ`, `MOVNTDQA`, `MOVNTI`, `MOVNTPD`, `MOVNTPS`, `PEXTR*`, `PINSR*`, and `INSERTPS/EXTRACTPS`.
+- Integer arithmetic and saturation: `PADDB/PADDW/PADDD/PADDQ`, `PSUBB/PSUBW/PSUBD/PSUBQ`, `PADDSB/PADDSW/PADDUSB/PADDUSW`, `PSUBSB/PSUBSW/PSUBUSB/PSUBUSW`, `PMULLW/PMULHW/PMULHUW/PMULDQ/PMULUDQ/PMULLD`, `PMADDWD/PMADDUBSW`, `PMULHRSW`, `PAVGB/PAVGW`, and `PSADBW`.
+- Compare, min/max, and test: `PCMPEQ*`, `PCMPGT*`, `PMIN*`, `PMAX*`, `PTEST`, and packed floating `CMPPS/CMPPD/CMPSS/CMPSD`.
+- Shuffle, pack, unpack, and extend: `PSHUFB`, `PSHUFD`, `PSHUFHW`, `PSHUFLW`, `SHUFPS/SHUFPD`, `PALIGNR`, `PHADD*`, `PHSUB*`, `PUNPCKH*`, `PUNPCKL*`, `PACK*`, `PMOVSX*`, `PMOVZX*`, `PABS*`, and `PSIGN*`.
+- Blend, dot product, strings, and polynomial multiply: `PBLENDW`, `PBLENDVB`, `BLENDPS/BLENDPD`, `BLENDVPS/BLENDVPD`, `DPPS/DPPD`, `MPSADBW`, `PHMINPOSUW`, `PCMPISTRI/PCMPISTRM`, `PCMPESTRI/PCMPESTRM`, and `PCLMULQDQ`.
+
+### AVX/AVX2 and FMA (128/256-bit XMM/YMM)
+
+- Floating-point arithmetic and comparisons: `VADDPS/VADDPD`, `VSUBPS/VSUBPD`, `VADDSUBPS/VADDSUBPD`, `VMULPS/VMULPD`, `VDIVPS/VDIVPD`, `VADDSD`, `VMAXPD`, `VSQRTPD`, `VCMPPS/VCMPPD`, `VCMPSD/VCMPSS`, `VCOMISD`, and `VTESTPS/VTESTPD`.
+- FMA3: `VFMADD132/213/231PS/PD`, `VFMSUB132/213/231PS/PD`, `VFNMADD132/213/231PS/PD`, and `VFNMSUB132/213/231PS/PD`.
+- Data movement and lane operations: `VMOVAPS/VMOVUPS`, `VMOVAPD/VMOVUPD`, `VMOVDQU`, `VMOVQ`, `VMOVSD`, `VEXTRACTF128/VEXTRACTI128`, `VPERM2F128/VPERM2I128`, `VBROADCASTSS/VBROADCASTSD`, `VBROADCASTF128/VBROADCASTI128`, `VZEROALL/VZEROUPPER`, and `VMASKMOVPD`.
+- AVX2 integer and gather operations: `VPBROADCASTB/W/D/Q`, `VPSHUFB`, `VPMULLD`, `VPMULUDQ`, `VPMADDUBSW`, `VPMINSD`, `VPMAXSD`, `VPMAXUB`, `VPSLLD`, `VPGATHERDD`, `VPERMD`, `VPERMQ`, `VPERMPD`, `VPERMPS`, `VPERMILPS`, `VPHADD*`, `VPHSUB*`, and `VPSIGN*`.
+- AVX packed helpers: `VBLENDPS/VBLENDPD`, `VDPPD`, `VPHMINPOSUW`, `VPACKSSDW`, `VPACKUSDW`, `VMOVMSKPD`, and `VMOVNTDQ`.
+
+### AVX-512 and opmask registers (XMM/YMM/ZMM EVEX)
+
+- EVEX floating point and conversion: `VADDPS/VADDPD`, `VSUBPS/VSUBPD`, `VMULPS/VMULPD`, `VDIVPS/VDIVPD`, `VMAXPS/VMAXPD`, `VMINPS/VMINPD`, `VSCALEFPS/VSCALEFPD/VSCALEFSS/VSCALEFSD`, and `VCVTPS2PD/VCVTPD2PS/VCVTDQ2PD/VCVTDQ2PS/VCVTPD2DQ/VCVTPS2DQ`.
+- EVEX integer arithmetic and saturation: `VPADDB/VPADDW/VPADDD/VPADDQ`, `VPSUBB/VPSUBW/VPSUBD/VPSUBQ`, `VPADDSB/VPADDSW/VPADDUSB/VPADDUSW`, `VPSUBSB/VPSUBSW/VPSUBUSB/VPSUBUSW`, `VPABS*`, `VPMULLW/VPMULHUW/VPMULHW/VPMULUDQ`, `VPMADDWD`, `VPSADBW`, and `VPSIGNB/VPSIGNW/VPSIGND`.
+- EVEX shifts: `VPSLLW/VPSLLD/VPSLLQ`, `VPSRLW/VPSRLD/VPSRLQ`, and `VPSRAW/VPSRAD/VPSRAQ`.
+- EVEX compare, min/max, and masks: `VPCMPEQB/W/D/Q`, `VPCMPGTB/W/D/Q`, `VPMINSB/SW/SD/SQ/UB/UW/UD/UQ`, `VPMAXSB/SW/SD/SQ/UB/UW/UD/UQ`, `VPTESTMD/VPTESTMQ`, and `VPMOVMSKB/D/W`.
+- EVEX shuffle, permute, pack, align, and extend: `VPSHUFB/VPSHUFD/VPSHUFHW/VPSHUFLW`, `VPERMB/VPERMW/VPERMD/VPERMQ`, `VPERMI2B/D/Q/W`, `VPERMUTB/D/Q/W`, `VPALIGNR`, `VPUNPCKL*/VPUNPCKH*`, `VPACKSSWB/VPACKUSWB`, and `VPMOVSX*/VPMOVZX*`.
+- EVEX blend, insert, extract, and crypto: `VBLENDMB/MD/MQ/MW`, `VBLENDMPS/VBLENDMPD`, `VPINSRB/VPINSRW/VPINSRD/VPINSRQ`, `VEXTRACTF32X4/VEXTRACTF64X2/VEXTRACTI32X4/VEXTRACTI64X2`, `VPCLMULQDQ`, `VAES*`, `VGF2P8*`, and `VSHA*`.
+- Opmask instructions and masking behavior: `KMOVW/KMOVQ`, `KANDW`, `KORW`, `KXORW`, `KXNORW`, `KNOTW`, `KSHIFTLW`, and `KSHIFTRW`, plus merge and zero masking across vector arithmetic, logical, comparison, shuffle, pack, permute, gather, and memory operations.
+
+### System and cryptographic instructions
+
+- System/user-mode state: `CPUID`, `RDTSC`, `RDTSCP`, `RDRAND`, `RDSEED`, `RDPID`, `RDFSBASE/RDGSBASE`, `RDPKRU/WRPKRU`, `XGETBV`, `XSAVE/XRSTOR`, `STMXCSR/VSTMXCSR`, and `LFENCE/MFENCE/SFENCE`.
+- AES and carry-less multiply: `AESENC/AESENCLAST`, `AESDEC/AESDECLAST`, `AESIMC`, `AESKEYGENASSIST`, `VAESENC/VAESENCLAST`, `VAESDEC/VAESDECLAST`, `PCLMULQDQ`, and `VPCLMULQDQ`.
+- SHA and GFNI: `SHA1RNDS4/SHA1MSG1/SHA1MSG2/SHA1NEXTE`, `SHA256RNDS2/SHA256MSG1/SHA256MSG2`, `GF2P8MULB/GF2P8AFFINEQB/GF2P8AFFINEINVQB`, and VEX/EVEX variants.
 
 ## Requirements
 
 - **Compiler**: GCC with support for the target instruction sets
 - **32-bit tests**: GCC multilib and 32-bit libc development/runtime support
 - **Architecture**: x86-64 (compilation host)
-- **CPU features needed at runtime**: SSE4.2, AVX2, FMA, AES-NI, SHA, AVX-512 (F/BW/DQ/VL/IFMA/VBMI), GFNI, VAES, VPCLMULQDQ, ADX, BMI1/BMI2
+- **CPU features needed at runtime**: SSE2/SSE3/SSSE3/SSE4.1/SSE4.2, AVX/AVX2, FMA, AES-NI, PCLMULQDQ, SHA, ADX, BMI1/BMI2, CRC32, FSGSBASE, RDPID, PKU, XSAVE/XGETBV, AVX-512F/BW/DQ/VL/IFMA/VBMI, GFNI, VAES, and VPCLMULQDQ
 
 Runtime CPUID guards are disabled by default, so instruction tests execute
 unconditionally. This is the preferred mode when testing a binary translator.
@@ -126,7 +167,7 @@ Running: integer/bin/test_add
 Running: integer/bin/test_sub
 ...
 ========================================
-Total: 235  Passed: 235  Failed: 0
+Total: 260  Passed: 260  Failed: 0
 ```
 
 ## Test Design

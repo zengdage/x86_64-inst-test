@@ -181,5 +181,14 @@ run-avx512: $(avx512_BINS)
 	done; \
 	echo "avx512: $$PASS passed, $$FAIL failed"
 
+run-avx256: $(avx256_BINS)
+	@PASS=0; FAIL=0; \
+	for bin in $(avx256_BINS); do \
+		if $$bin > /dev/null 2>&1; then PASS=$$((PASS+1)); \
+		else FAIL=$$((FAIL+1)); echo "FAILED: $$bin"; fi; \
+	done; \
+	echo "avx256: $$PASS passed, $$FAIL failed"; \
+	test "$$FAIL" -eq 0
+
 clean:
 	rm -rf integer/bin integer32/bin float/bin simd/bin system/bin crypto/bin avx512/bin avx256/bin

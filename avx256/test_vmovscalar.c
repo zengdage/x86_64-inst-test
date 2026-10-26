@@ -186,6 +186,39 @@ static void test_scalar_merge_and_upper_zeroing(void) {
     for (int i = 4; i < 8; i++)
         TEST_ASSERT(result.u32[i] == 0, "vmovss VEX.128 zeroes upper ymm lane %d", i);
 
+    ymm_t merge_src = { .u32 = {
+        UINT32_C(0x11111111), UINT32_C(0x22222222),
+        UINT32_C(0x33333333), UINT32_C(0x44444444),
+        UINT32_C(0x55555555), UINT32_C(0x66666666),
+        UINT32_C(0x77777777), UINT32_C(0x88888888)
+    } };
+    ymm_t scalar_src = { .u32 = {
+        UINT32_C(0x7fc54321), UINT32_C(0xaaaaaaaa),
+        UINT32_C(0xbbbbbbbb), UINT32_C(0xcccccccc),
+        UINT32_C(0xdddddddd), UINT32_C(0xeeeeeeee),
+        UINT32_C(0xffffffff), UINT32_C(0x12345678)
+    } };
+    ymm_t dst_before = { .u32 = {
+        UINT32_C(0x99999999), UINT32_C(0xaaaaaaaa),
+        UINT32_C(0xbbbbbbbb), UINT32_C(0xcccccccc),
+        UINT32_C(0xdddddddd), UINT32_C(0xeeeeeeee),
+        UINT32_C(0xffffffff), UINT32_C(0x12345678)
+    } };
+    __asm__ volatile (
+        "vmovdqu %1, %%ymm0\n\t" "vmovdqu %2, %%ymm1\n\t"
+        "vmovdqu %3, %%ymm2\n\t"
+        /* VEX.128.F3.0F 11 /r: low XMM2 lane from XMM1, remaining XMM lanes
+           from XMM0; upper YMM bits are zero. */
+        ".byte 0xc5, 0xfa, 0x11, 0xca\n\t"
+        "vmovdqu %%ymm2, %0"
+        : "=m"(result) : "m"(merge_src), "m"(scalar_src), "m"(dst_before)
+        : "xmm0", "xmm1", "xmm2");
+    TEST_ASSERT(result.u32[0] == scalar_src.u32[0], "vmovss 0F 11 reg-reg low lane comes from scalar source");
+    for (int i = 1; i < 4; i++)
+        TEST_ASSERT(result.u32[i] == merge_src.u32[i], "vmovss 0F 11 merge-source lane %d", i);
+    for (int i = 4; i < 8; i++)
+        TEST_ASSERT(result.u32[i] == 0, "vmovss 0F 11 zeroes upper ymm lane %d", i);
+
     uint32_t scalar = UINT32_C(0x80000000);
     __asm__ volatile (
         "vmovss %1, %%xmm0\n\t" "vmovdqu %%ymm0, %0"
