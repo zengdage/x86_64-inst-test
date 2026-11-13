@@ -17,12 +17,12 @@ x86_64-inst-test/
 ├── float/            # 32 tests — x87 FPU and SSE scalar/packed float
 ├── simd/             # 71 tests — SSE/SSSE3/SSE4/AVX/AVX2
 ├── avx256/           # 25 tests — AVX/AVX2 256-bit supplemental
-├── avx512/           # 46 tests — AVX-512 (EVEX-encoded)
+├── avx512/           # 78 tests — AVX-512 (EVEX-encoded)
 ├── system/           # 10 tests — User-mode system instructions
 └── crypto/           # 14 tests — AES/SHA/PCLMUL/GF2P8
 ```
 
-**Total: 260 test programs** covering more than 1,000 x86-64 instruction forms.
+**Total: 292 test programs** covering more than 1,000 x86-64 instruction forms.
 
 ## Instruction Coverage
 
@@ -63,13 +63,21 @@ The list below describes the instruction forms exercised by the current source t
 
 ### AVX-512 and opmask registers (XMM/YMM/ZMM EVEX)
 
-- EVEX floating point and conversion: `VADDPS/VADDPD`, `VSUBPS/VSUBPD`, `VMULPS/VMULPD`, `VDIVPS/VDIVPD`, `VMAXPS/VMAXPD`, `VMINPS/VMINPD`, `VSCALEFPS/VSCALEFPD/VSCALEFSS/VSCALEFSD`, and `VCVTPS2PD/VCVTPD2PS/VCVTDQ2PD/VCVTDQ2PS/VCVTPD2DQ/VCVTPS2DQ`.
-- EVEX integer arithmetic and saturation: `VPADDB/VPADDW/VPADDD/VPADDQ`, `VPSUBB/VPSUBW/VPSUBD/VPSUBQ`, `VPADDSB/VPADDSW/VPADDUSB/VPADDUSW`, `VPSUBSB/VPSUBSW/VPSUBUSB/VPSUBUSW`, `VPABS*`, `VPMULLW/VPMULHUW/VPMULHW/VPMULUDQ`, `VPMADDWD`, `VPSADBW`, and `VPSIGNB/VPSIGNW/VPSIGND`.
-- EVEX shifts: `VPSLLW/VPSLLD/VPSLLQ`, `VPSRLW/VPSRLD/VPSRLQ`, and `VPSRAW/VPSRAD/VPSRAQ`.
-- EVEX compare, min/max, and masks: `VPCMPEQB/W/D/Q`, `VPCMPGTB/W/D/Q`, `VPMINSB/SW/SD/SQ/UB/UW/UD/UQ`, `VPMAXSB/SW/SD/SQ/UB/UW/UD/UQ`, `VPTESTMD/VPTESTMQ`, and `VPMOVMSKB/D/W`.
+- EVEX floating point and conversion: `VADDPS/VADDPD`, `VSUBPS/VSUBPD`, `VMULPS/VMULPD`, `VDIVPS/VDIVPD`, `VSQRTPS`, `VMAXPS/VMAXPD`, `VMINPS/VMINPD`, `VCMPPS/VCMPPD/VCMPSS/VCMPSD`, `VSCALEF*`, `VRCP14PS`, `VRSQRT14PS`, `VGETEXPPS`, `VGETMANTPS`, `VRNDSCALEPS`, `VREDUCEPS`, `VRANGEPS`, and `VFPCLASSPS`.
+- EVEX FMA and conversion boundaries: `VFMADD132/213/231PS/PD`, `VFMSUB132/213/231PS`, `VFNMADD132PS`, `VFNMSUB231PS`, `VCVTPS2PD/VCVTPD2PS`, signed and unsigned `VCVT*DQ/QQ`, and truncating `VCVTT*DQ/QQ` forms. Tests include fused-rounding discriminators, NaNs, infinities, signed zero, ties-to-even, and integer precision boundaries.
+- EVEX integer arithmetic and saturation: `VPADDB/VPADDW/VPADDD/VPADDQ`, `VPSUBB/VPSUBW/VPSUBD/VPSUBQ`, `VPADDSB/VPADDSW/VPADDUSB/VPADDUSW`, `VPSUBSB/VPSUBSW/VPSUBUSB/VPSUBUSW`, `VPABS*`, `VPMULLW/VPMULHUW/VPMULHW/VPMULLD/VPMULUDQ`, `VPMADDWD/VPMADDUBSW`, `VPSADBW`, and `VPSIGNB/VPSIGNW/VPSIGND`.
+- EVEX shifts, rotates, and ternary logic: `VPSLLW/D/Q`, `VPSRLW/D/Q`, `VPSRAW/D/Q`, variable word/dword/qword shifts, `VPROLD/Q`, variable dword/qword rotates, and `VPTERNLOGD/Q`, including counts at and beyond the element width and fully overlapping operands.
+- EVEX compare, min/max, multiply, and masks: legacy-style `VPCMPEQ*`/`VPCMPGT*`, all eight signed and unsigned `VPCMPB/W/D/Q` predicates, `VPMIN*`, `VPMAX*`, `VPMULLQ`, `VPMULDQ`, `VPMULHRSW`, `VPTESTM*`, and `VPMOV{B,D,Q,W}2M/VPMOVM2{B,D,Q,W}`.
 - EVEX shuffle, permute, pack, align, and extend: `VPSHUFB/VPSHUFD/VPSHUFHW/VPSHUFLW`, `VPERMB/VPERMW/VPERMD/VPERMQ`, `VPERMI2B/D/Q/W`, `VPERMUTB/D/Q/W`, `VPALIGNR`, `VPUNPCKL*/VPUNPCKH*`, `VPACKSSWB/VPACKUSWB`, and `VPMOVSX*/VPMOVZX*`.
+- EVEX data distribution and indexed memory: scalar and block `VBROADCAST*` forms, `VPBROADCASTB/W/D/Q`, mask broadcasts, 128/256-bit `VINSERTF*/VINSERTI*` forms, integer and floating-point `VPERMI2*`/`VPERMT2*`, `VPCOMPRESSD/Q`, `VPEXPANDD`, `VCOMPRESSPS`, `VEXPANDPD`, `VPGATHERDD/QQ`, and `VPSCATTERDD`. Empty-mask tests use `PROT_NONE` pages to verify fault suppression.
+- EVEX narrowing and extension: truncating, signed-saturating, and unsigned-saturating `VPMOV*` forms across qword/dword/word/byte widths, plus signed/unsigned byte-to-word extension with boundary and overflow cases.
+- Extension-specific arithmetic: `VPMADD52LUQ/VPMADD52HUQ` (AVX-512IFMA) and `VPMULTISHIFTQB` (AVX-512VBMI), checked against 104-bit and bit-window software references.
+- Conflict, bit, and neural-network extensions: `VPCONFLICTD/Q` and `VPLZCNTD/Q` (AVX-512CD), `VPOPCNTB/W` and `VPSHUFBITQMB` (AVX-512BITALG), `VPOPCNTD/Q` (AVX-512VPOPCNTDQ), and the four `VPDPBUSD/VPDPBUSDS/VPDPWSSD/VPDPWSSDS` AVX-512VNNI dot products.
+- Additional permute and set operations: byte/word `VPCOMPRESS*`/`VPEXPAND*` plus `VPSHLD*`/`VPSHRD*` (AVX-512VBMI2), and `VP2INTERSECTD/Q` with both architectural result masks (AVX-512VP2INTERSECT).
+- Cross-generation numeric extensions: `VEXP2*`, `VRCP28*`, and `VRSQRT28*` (AVX-512ER); gather/scatter prefetch forms (AVX-512PF); `V4FMADD*`/`V4FNMADD*` (AVX-512_4FMAPS); and `VP4DPWSSD/VP4DPWSSDS` (AVX-512_4VNNIW).
+- Low-precision arithmetic: `VCVTNEPS2BF16`, `VCVTNE2PS2BF16`, and `VDPBF16PS` (AVX-512BF16), plus packed-half `VADDPH`, `VMULPH`, `VFMADD231PH`, `VSQRTPH`, and `VCMPPH` (AVX-512FP16). FP16 reference values use an integer IEEE binary16 implementation rather than compiler intrinsics.
 - EVEX blend, insert, extract, and crypto: `VBLENDMB/MD/MQ/MW`, `VBLENDMPS/VBLENDMPD`, `VPINSRB/VPINSRW/VPINSRD/VPINSRQ`, `VEXTRACTF32X4/VEXTRACTF64X2/VEXTRACTI32X4/VEXTRACTI64X2`, `VPCLMULQDQ`, `VAES*`, `VGF2P8*`, and `VSHA*`.
-- Opmask instructions and masking behavior: `KMOVW/KMOVQ`, `KANDW`, `KORW`, `KXORW`, `KXNORW`, `KNOTW`, `KSHIFTLW`, and `KSHIFTRW`, plus merge and zero masking across vector arithmetic, logical, comparison, shuffle, pack, permute, gather, and memory operations.
+- Opmask instructions and masking behavior: `KMOVB/W/D/Q`, `KADD*`, `KANDW`, `KORW`, `KXORW`, `KXNORW`, `KNOTW`, `KSHIFT*`, `KTESTW`, and `KORTESTW`, plus merge and zero masking across vector arithmetic, logical, comparison, shuffle, pack, permute, gather, scatter, and memory operations.
 
 ### System and cryptographic instructions
 
@@ -82,7 +90,8 @@ The list below describes the instruction forms exercised by the current source t
 - **Compiler**: GCC with support for the target instruction sets
 - **32-bit tests**: GCC multilib and 32-bit libc development/runtime support
 - **Architecture**: x86-64 (compilation host)
-- **CPU features needed at runtime**: SSE2/SSE3/SSSE3/SSE4.1/SSE4.2, AVX/AVX2, FMA, AES-NI, PCLMULQDQ, SHA, ADX, BMI1/BMI2, CRC32, FSGSBASE, RDPID, PKU, XSAVE/XGETBV, AVX-512F/BW/DQ/VL/IFMA/VBMI, GFNI, VAES, and VPCLMULQDQ
+- **CPU features needed for the default native run**: SSE2/SSE3/SSSE3/SSE4.1/SSE4.2, AVX/AVX2, FMA, AES-NI, PCLMULQDQ, SHA, ADX, BMI1/BMI2, CRC32, FSGSBASE, RDPID, PKU, XSAVE/XGETBV, AVX-512F/BW/CD/DQ/VL/IFMA/VBMI/VBMI2/VNNI/BITALG, GFNI, VAES, and VPCLMULQDQ
+- **Additional features covered by translator/full-extension runs**: AVX-512ER, AVX-512PF, AVX-512_4FMAPS, AVX-512_4VNNIW, AVX-512VPOPCNTDQ, AVX-512VP2INTERSECT, AVX-512BF16, and AVX-512FP16
 
 Runtime CPUID guards are disabled by default, so instruction tests execute
 unconditionally. This is the preferred mode when testing a binary translator.
@@ -128,6 +137,7 @@ make run-simd
 make run-system
 make run-crypto
 make run-avx512
+make run-avx512-all  # requires every AVX-512 extension or a capable translator
 make run-avx256
 ```
 
@@ -167,7 +177,7 @@ Running: integer/bin/test_add
 Running: integer/bin/test_sub
 ...
 ========================================
-Total: 260  Passed: 260  Failed: 0
+Total: 282  Passed: 282  Failed: 0
 ```
 
 ## Test Design

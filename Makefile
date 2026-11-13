@@ -27,7 +27,8 @@ float_FLAGS   = -lm
 simd_FLAGS    = -mavx2 -mfma -mpclmul -msha -maes
 system_FLAGS  =
 crypto_FLAGS  = -maes -mpclmul -msha -mavx2 -mgfni
-avx512_FLAGS  = -mavx512f -mavx512bw -mavx512dq -mavx512vl -mavx512ifma -mavx512vbmi -maes -mpclmul -msha -mgfni -mvaes -mvpclmulqdq
+avx512_FLAGS  = -mavx512f -mavx512bw -mavx512dq -mavx512vl -mavx512ifma -mavx512vbmi -mavx512cd -mavx512vbmi2 -mavx512vnni -mavx512bitalg -maes -mpclmul -msha -mgfni -mvaes -mvpclmulqdq
+avx512_LIBS   = -lm
 avx256_FLAGS  = -mavx2 -mfma
 
 # Collect all sources per category
@@ -50,9 +51,17 @@ crypto_BINS  := $(patsubst crypto/%.c,  crypto/bin/%,  $(crypto_SRCS))
 avx512_BINS  := $(patsubst avx512/%.c,  avx512/bin/%,  $(avx512_SRCS))
 avx256_BINS  := $(patsubst avx256/%.c,  avx256/bin/%,  $(avx256_SRCS))
 
-ALL_BINS := $(integer_BINS) $(integer32_BINS) $(float_BINS) $(simd_BINS) $(system_BINS) $(crypto_BINS) $(avx512_BINS) $(avx256_BINS)
+avx512_RARE_NAMES := test_avx5124fmaps test_avx5124vnniw test_avx512bf16 \
+	test_avx512er test_avx512fp16 test_avx512fp16_scalar test_avx512pf \
+	test_avx512vp2intersect \
+	test_avx512vpopcntdq
+avx512_RARE_BINS := $(addprefix avx512/bin/,$(avx512_RARE_NAMES))
+avx512_NATIVE_BINS := $(filter-out $(avx512_RARE_BINS),$(avx512_BINS))
 
-.PHONY: all run box64 clean $(addprefix run-, $(DIRS))
+ALL_BINS := $(integer_BINS) $(integer32_BINS) $(float_BINS) $(simd_BINS) $(system_BINS) $(crypto_BINS) $(avx512_BINS) $(avx256_BINS)
+NATIVE_BINS := $(filter-out $(avx512_RARE_BINS),$(ALL_BINS))
+
+.PHONY: all run box64 clean run-avx512-all $(addprefix run-, $(DIRS))
 
 all: $(ALL_BINS)
 
@@ -76,7 +85,15 @@ crypto/bin/%: crypto/%.c | crypto/bin
 	$(CC) $(CFLAGS) $(crypto_FLAGS) -o $@ $< $(LDFLAGS)
 
 avx512/bin/%: avx512/%.c | avx512/bin
-	$(CC) $(CFLAGS) $(avx512_FLAGS) -o $@ $< $(LDFLAGS)
+	$(CC) $(CFLAGS) $(avx512_FLAGS) -o $@ $< $(LDFLAGS) $(avx512_LIBS)
+
+avx512/bin/test_avx5124fmaps: avx512_FLAGS += -mavx5124fmaps
+avx512/bin/test_avx5124vnniw: avx512_FLAGS += -mavx5124vnniw
+avx512/bin/test_avx512bf16: avx512_FLAGS += -mavx512bf16
+avx512/bin/test_avx512er: avx512_FLAGS += -mavx512er
+avx512/bin/test_avx512pf: avx512_FLAGS += -mavx512pf
+avx512/bin/test_avx512vp2intersect: avx512_FLAGS += -mavx512vp2intersect
+avx512/bin/test_avx512vpopcntdq: avx512_FLAGS += -mavx512vpopcntdq
 
 avx256/bin/%: avx256/%.c | avx256/bin
 	$(CC) $(CFLAGS) $(avx256_FLAGS) -o $@ $< $(LDFLAGS)
@@ -88,7 +105,7 @@ integer/bin integer32/bin float/bin simd/bin system/bin crypto/bin avx512/bin av
 # Run all tests (compile first)
 run: all
 	@PASS=0; FAIL=0; ERRORS=""; \
-	for bin in $(ALL_BINS); do \
+	for bin in $(NATIVE_BINS); do \
 		echo "Running: $$bin"; \
 		if $$bin > /dev/null 2>&1; then \
 			PASS=$$((PASS+1)); \
@@ -173,13 +190,22 @@ run-crypto: $(crypto_BINS)
 	done; \
 	echo "crypto: $$PASS passed, $$FAIL failed"
 
-run-avx512: $(avx512_BINS)
+run-avx512: $(avx512_NATIVE_BINS)
+	@PASS=0; FAIL=0; \
+	for bin in $(avx512_NATIVE_BINS); do \
+		if $$bin > /dev/null 2>&1; then PASS=$$((PASS+1)); \
+		else FAIL=$$((FAIL+1)); echo "FAILED: $$bin"; fi; \
+	done; \
+	echo "avx512: $$PASS passed, $$FAIL failed"
+
+run-avx512-all: $(avx512_BINS)
 	@PASS=0; FAIL=0; \
 	for bin in $(avx512_BINS); do \
 		if $$bin > /dev/null 2>&1; then PASS=$$((PASS+1)); \
 		else FAIL=$$((FAIL+1)); echo "FAILED: $$bin"; fi; \
 	done; \
-	echo "avx512: $$PASS passed, $$FAIL failed"
+	echo "avx512-all: $$PASS passed, $$FAIL failed"; \
+	test "$$FAIL" -eq 0
 
 run-avx256: $(avx256_BINS)
 	@PASS=0; FAIL=0; \
