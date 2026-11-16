@@ -6,17 +6,18 @@ This file applies to the entire repository. It describes the project conventions
 
 This repository is an x86-64 instruction conformance suite, primarily intended to validate binary translators such as Box64. Tests use inline assembly to execute exact instructions and check architectural results: destination values, flags, masks, exception state, saved processor state, and fault-suppression behavior.
 
-The suite currently contains 242 standalone C test programs:
+The suite currently contains 648 standalone C test programs:
 
 | Directory | Tests | Scope |
 | --- | ---: | --- |
-| `integer/` | 59 | General-purpose integer instructions and flags |
-| `float/` | 31 | x87, SSE scalar and packed floating point |
-| `simd/` | 67 | SSE through AVX2 SIMD instructions |
-| `system/` | 9 | User-mode system and extended-state instructions |
-| `crypto/` | 14 | AES, SHA, PCLMUL and GFNI |
-| `avx512/` | 45 | EVEX/AVX-512 instructions and mask registers |
-| `avx256/` | 17 | Supplemental AVX/AVX2/FMA tests |
+| `scalar/` | 67 | 64-bit integer, control-flow, string and segment instructions |
+| `compat32/` | 6 | 32-bit compatibility-mode instructions |
+| `x87/` | 13 | x87 floating point, stack and state instructions |
+| `sse/` | 86 | MMX and legacy SSE/SSSE3/SSE4 encodings, including crypto |
+| `avx/` | 245 | VEX AVX/AVX2/FMA/F16C encodings, including crypto |
+| `system/` | 15 | User-mode system and extended-state instructions |
+| `avx512/core/` | 180 | Default EVEX/AVX-512 instructions and mask registers |
+| `avx512/rare/` | 36 | Uncommon AVX-512 extensions excluded from the default native run |
 
 Each `directory/test_name.c` normally has a tracked precompiled counterpart at `directory/bin/test_name`. These binaries are intentionally versioned because `make box64` executes them without rebuilding.
 
@@ -38,7 +39,7 @@ make run
 The expected full native result on a machine supporting all instructions is:
 
 ```text
-Total: 242  Passed: 242  Failed: 0
+Total: 612  Passed: 612  Failed: 0
 ```
 
 For safer native execution on a machine that may lack optional instruction sets, enable the guards and force recompilation because Make does not track flag changes:
@@ -53,7 +54,9 @@ Run tracked binaries through a translator without rebuilding:
 make box64 BOX64=/path/to/box64
 ```
 
-Implemented category runners are `run-integer`, `run-float`, `run-simd`, `run-system`, `run-crypto`, and `run-avx512`. There is currently no `run-avx256` rule; run those binaries directly or use `make run`.
+Implemented category runners are `run-scalar`, `run-compat32`, `run-x87`,
+`run-sse`, `run-avx`, `run-system`, `run-avx512`, and `run-avx512-all`.
+The default `run` target excludes the 36 tests under `avx512/rare/`.
 
 Do not use static linking. The repository build uses dynamically linked, stripped binaries.
 
@@ -81,15 +84,15 @@ Do not add an unconditional CPUID-based skip. A test silently skipping in the de
 4. Strictly compile each changed test to `/tmp` before touching tracked binaries. Use `-O0 -Wall -Werror` plus the appropriate ISA flags, for example:
 
    ```bash
-   gcc -O0 -Wall -Werror -msse4.2 simd/test_pcmpistri.c -o /tmp/test_pcmpistri
-   gcc -O0 -Wall -Werror -mavx2 -mfma simd/test_vfmadd.c -o /tmp/test_vfmadd -lm
+   gcc -O0 -Wall -Werror -msse4.2 sse/test_pcmpistri.c -o /tmp/test_pcmpistri
+   gcc -O0 -Wall -Werror -mavx2 -mfma avx/test_vfmadd132ps.c -o /tmp/test_vfmadd132ps -lm
    gcc -O0 -Wall -Werror -mavx512f -mavx512bw -mavx512dq -mavx512vl \
-       avx512/test_example.c -o /tmp/test_example
+       avx512/core/test_vaddps.c -o /tmp/test_vaddps -lm
    ```
 
 5. Run every temporary binary and resolve all failures.
 6. Run `make -j4 all` to rebuild tracked binaries with repository flags. Keep the changed binaries corresponding to changed sources.
-7. Run `make run`; the required final result is 242/242.
+7. Run `make run`; the required final result is 612/612.
 8. Run `git diff --check` and inspect `git status --short` and `git diff --stat`.
 
 Do not commit unless the user explicitly asks for a commit.
