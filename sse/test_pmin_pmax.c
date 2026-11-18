@@ -157,6 +157,27 @@ static void test_pminuw(void) {
     TEST_ASSERT(dst.u16[2] == 0, "pminuw: got %u", dst.u16[2]);
 }
 
+static void test_pmaxuw(void) {
+    xmm_t a = { .u16 = {0, 0x7FFF, 0x8000, 0xFFFF, 100, 200, 42, 0xFFFE} };
+    xmm_t b = { .u16 = {1, 0x8000, 0x7FFF, 0, 200, 100, 42, 0xFFFF} };
+    const uint16_t expected[8] = {
+        1, 0x8000, 0x8000, 0xFFFF, 200, 200, 42, 0xFFFF
+    };
+    xmm_t dst;
+
+    __asm__ volatile (
+        "movdqa %1, %%xmm0\n\t"
+        "pmaxuw %2, %%xmm0\n\t"
+        "movdqa %%xmm0, %0"
+        : "=m"(dst) : "m"(a), "m"(b) : "xmm0"
+    );
+    for (int i = 0; i < 8; i++) {
+        TEST_ASSERT(dst.u16[i] == expected[i],
+                    "pmaxuw lane %d: expected %u, got %u",
+                    i, expected[i], dst.u16[i]);
+    }
+}
+
 static void test_pminud(void) {
     xmm_t a = { .u32 = {0, 0x80000000, 0xFFFFFFFF, 100} };
     xmm_t b = { .u32 = {1, 0x7FFFFFFF, 0, 200} };
@@ -202,6 +223,7 @@ int main(void) {
     test_pminub();
     test_pmaxub();
     test_pminuw();
+    test_pmaxuw();
     test_pminud();
     test_pmaxud();
     TEST_END();

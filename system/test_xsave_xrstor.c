@@ -54,6 +54,17 @@ static uint32_t get_xsave_size(void)
     return ecx;
 }
 
+static uint32_t get_xsave_features(void)
+{
+    uint32_t eax, ebx, ecx, edx;
+    __asm__ volatile (
+        "cpuid"
+        : "=a"(eax), "=b"(ebx), "=c"(ecx), "=d"(edx)
+        : "a"(0x0D), "c"(1)
+    );
+    return eax;
+}
+
 /* Test CPUID leaf 0x0D: XSAVE area info */
 static void test_xsave_cpuid_info(void)
 {
@@ -325,6 +336,112 @@ static void test_xsave_zero_mask(void)
     free(xsave_area);
 }
 
+static void test_xsaveopt_xmm_roundtrip(void)
+{
+    uint32_t xsave_size = get_xsave_size();
+    uint8_t *area = NULL;
+    xmm_t before = { .u64 = {
+        UINT64_C(0x0123456789ABCDEF), UINT64_C(0xFEDCBA9876543210)
+    } };
+    xmm_t after = {0};
+    uint64_t xstate_bv;
+
+    TEST_START("XSAVEOPT/XRSTOR - XMM state round-trip");
+#if ENABLE_RUNTIME_CPU_CHECKS
+    if (!(get_xsave_features() & (1U << 0))) {
+        printf("  XSAVEOPT not supported, skipping\n");
+        return;
+    }
+#endif
+    if (posix_memalign((void **)&area, 64, xsave_size) != 0) {
+        TEST_ASSERT(0, "XSAVEOPT allocation");
+        return;
+    }
+    memset(area, 0, xsave_size);
+
+    __asm__ volatile (
+        "movdqa %1, %%xmm0\n\t"
+        "xsaveopt (%2)"
+        : "=m"(*area)
+        : "m"(before), "r"(area), "a"(3U), "d"(0U)
+        : "xmm0", "memory"
+    );
+    memcpy(&xstate_bv, area + 512, sizeof(xstate_bv));
+    TEST_ASSERT(xstate_bv & (1U << 1),
+                "XSAVEOPT marks non-initial XMM state in XSTATE_BV");
+
+    __asm__ volatile (
+        "pxor %%xmm0, %%xmm0\n\t"
+        "xrstor (%1)\n\t"
+        "movdqa %%xmm0, %0"
+        : "=m"(after)
+        : "r"(area), "a"(3U), "d"(0U)
+        : "xmm0", "memory"
+    );
+    TEST_ASSERT(memcmp(&after, &before, sizeof(before)) == 0,
+                "XSAVEOPT preserves the complete XMM0 value");
+    free(area);
+}
+
+__attribute__((target("avx")))
+static void test_xsavec_ymm_roundtrip(void)
+{
+    uint32_t xsave_size = get_xsave_size();
+    uint64_t xcr0 = get_xcr0();
+    uint8_t *area = NULL;
+    ymm_t before = { .u64 = {
+        UINT64_C(0x0011223344556677), UINT64_C(0x8899AABBCCDDEEFF),
+        UINT64_C(0x1021324354657687), UINT64_C(0x98A9BACBDCEDFE0F)
+    } };
+    ymm_t after = {0};
+    uint64_t xstate_bv, xcomp_bv;
+
+    TEST_START("XSAVEC/XRSTOR - compacted YMM state round-trip");
+#if ENABLE_RUNTIME_CPU_CHECKS
+    if (!(get_xsave_features() & (1U << 1))) {
+        printf("  XSAVEC not supported, skipping\n");
+        return;
+    }
+#endif
+    if (!(xcr0 & (1U << 2))) {
+        printf("  AVX state not enabled in XCR0, skipping\n");
+        return;
+    }
+    if (posix_memalign((void **)&area, 64, xsave_size) != 0) {
+        TEST_ASSERT(0, "XSAVEC allocation");
+        return;
+    }
+    memset(area, 0, xsave_size);
+
+    __asm__ volatile (
+        "vmovdqu (%1), %%ymm0\n\t"
+        "xsavec (%2)"
+        : "=m"(*area)
+        : "r"(&before), "r"(area), "a"(7U), "d"(0U)
+        : "ymm0", "memory"
+    );
+    memcpy(&xstate_bv, area + 512, sizeof(xstate_bv));
+    memcpy(&xcomp_bv, area + 520, sizeof(xcomp_bv));
+    TEST_ASSERT((xstate_bv & (1U << 2)) != 0,
+                "XSAVEC marks non-initial YMM state in XSTATE_BV");
+    TEST_ASSERT((xcomp_bv >> 63) == 1,
+                "XSAVEC sets XCOMP_BV compacted-format bit");
+    TEST_ASSERT((xcomp_bv & 7U) == 7U,
+                "XSAVEC XCOMP_BV contains requested x87/SSE/AVX components");
+
+    __asm__ volatile (
+        "vpxor %%ymm0, %%ymm0, %%ymm0\n\t"
+        "xrstor (%1)\n\t"
+        "vmovdqu %%ymm0, %0"
+        : "=m"(after)
+        : "r"(area), "a"(7U), "d"(0U)
+        : "ymm0", "memory"
+    );
+    TEST_ASSERT(memcmp(&after, &before, sizeof(before)) == 0,
+                "XSAVEC preserves the complete YMM0 value");
+    free(area);
+}
+
 __attribute__((target("avx,avx512f")))
 static void test_xsave_extended_roundtrips(void)
 {
@@ -405,6 +522,8 @@ int main(void)
     test_xsave_xrstor_sse_roundtrip();
     test_xsave_legacy_region();
     test_xsave_zero_mask();
+    test_xsaveopt_xmm_roundtrip();
+    test_xsavec_ymm_roundtrip();
     test_xsave_extended_roundtrips();
 
     TEST_END();
